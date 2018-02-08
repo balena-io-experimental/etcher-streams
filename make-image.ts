@@ -1,16 +1,21 @@
-const Promise = require('bluebird')
-const aws = require('aws-sdk')
-const fs = require('mz/fs')
+import { S3 } from 'aws-sdk'
+import * as Promise from 'bluebird'
+import * as fs from 'mz/fs'
+import * as commander from 'commander'
+import * as progress from 'stream-progressbar'
 
-import { ResinS3Source } from './resin-s3-source'
 import { ConfiguredSource } from './configured-source'
+import { ResinS3Source } from './resin-s3-source'
+import { FileSource } from './file-source'
+
+import { version } from './package.json'
 
 const API_CONFIG = require('./rpi3.config.json')
 const DEVICE_TYPE = 'raspberry-pi'
 const VERSION = '2.9.6+rev1.prod'
 const S3_BUCKET = 'resin-staging-img'
 
-const s3 = new aws.S3({
+const s3 = new S3({
 	accessKeyId: null,
 	secretAccessKey: null,
 	s3ForcePathStyle: true,
@@ -24,37 +29,49 @@ for (let key of [ 'getObject', 'headObject' ]) {
 	}
 }
 
-const pipeAndWait = async (...streams) => {
-	if (streams.length <= 1) {
-		throw new Error('pipeAndWait needs at least 2 arguments')
+const getSource = (url) => {
+	const URL_REGEX = /^(file|resin-s3):\/\/(.*)/
+	const result = URL_REGEX.exec(url)
+	const protocol = result[1]
+	const path = result[2]
+	if (protocol === 'file') {
+		// file://resin.img
+		return new FileSource(path)
+	} else if (protocol === 'resin-s3') {
+		// resin-s3://resin-staging-img/raspberry-pi/2.9.6+rev1.prod
+		const [ bucket, deviceType, version ] = path.split('/')
+		return new ResinS3Source(s3, bucket, deviceType, version)
 	}
+	// TODO: throw an error here
+}
+
+const main = async (input, output, configPath) => {
+	const source = getSource(input)
+	const outputStream = fs.createWriteStream(output)
+	let config = API_CONFIG
+	try {
+		config = await fs.readFile(configPath)
+	} catch (e) {
+	}
+
+	const configuredSource = await ConfiguredSource.fromSource(source, config)
+	const metadata = await configuredSource.getMetadata()
+	const stream = await configuredSource.createReadStream({})
+	stream
+	.pipe(progress('[:bar] :current / :total bytes ; :percent', {total: metadata.size, width: 40}))
+	.pipe(outputStream)
+
 	await new Promise((resolve, reject) => {
-		for (let i=1; i<streams.length; i++) {
-			streams[i - 1].on('error', reject)
-			streams[i].on('error', reject)
-			streams[i - 1].pipe(streams[i])
-		}
-		streams[streams.length - 1].on('close', resolve)
+		outputStream.on('close', resolve)
+		outputStream.on('error', reject)
+		stream.on('error', reject)
 	})
 }
 
-const main = async () => {
-	try {
-		const source = new ResinS3Source(s3, S3_BUCKET, DEVICE_TYPE, VERSION)
-		const configuredSource = await ConfiguredSource.fromSource(source, API_CONFIG)
-		const stream = await configuredSource.createReadStream({})
-
-		const buffer = Buffer.alloc(1024)
-		const bufferOffset = 0
-		const length = buffer.length
-		const sourceOffset = 0
-		const data = await configuredSource.read(buffer, bufferOffset, length, sourceOffset)
-		console.log('data', data)
-
-		await pipeAndWait(stream, fs.createWriteStream('resin.img'))
-	} catch (e) {
-		console.log('error', e)
-	}
-}
-
-main()
+commander
+.version(version)
+.option('-i', '--input <input>', 'Input URL (file:// and resin-s3:// URLs are accepted')
+.option('-o', '--output <output>', 'Output file path')  // TODO: accept URLs, use Destination class
+.option('-c', '--config [config]', 'Config file path (get a config from dashboard.resin.io)')
+.action(main)
+.parse(process.argv)

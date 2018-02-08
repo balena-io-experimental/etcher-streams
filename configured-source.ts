@@ -1,12 +1,12 @@
-const _ = require('lodash')
-const Promise = require('bluebird')
-const filedisk = require('file-disk')
-const Stream = require('stream')
-const iisect = require("interval-intersection")
+import * as Promise from 'bluebird'
+import { Disk } from 'file-disk'
+import * as iisect from 'interval-intersection'
+import * as _ from 'lodash'
+import { Transform } from 'stream'
 
-const configure = require('./configure').configure
+import { configure } from './configure'
 
-class FileDiskTransformStream extends Stream.Transform {  // TODO: this should be in filedisk.Disk
+class FileDiskTransformStream extends Transform {  // TODO: this should be in filedisk.Disk
 	constructor(disk) {
 		super()
 		this.disk = disk
@@ -47,7 +47,7 @@ class FileDiskTransformStream extends Stream.Transform {  // TODO: this should b
 	}
 }
 
-class SourceDisk extends filedisk.Disk {
+class SourceDisk extends Disk {
 	constructor(source) {
 		super(
 			true,  // readOnly

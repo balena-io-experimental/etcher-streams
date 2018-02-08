@@ -1,19 +1,14 @@
-const _ = require('lodash')
-const Promise = require('bluebird')
-const unzip = require("unzip-stream")
-const progress = require("stream-progressbar")
+import * as Promise from 'bluebird'
+import * as _ from 'lodash'
+import * as unzip from 'unzip-stream'
 
-const getImageStreamFromZipStream = async (zipStream, zipSize) => {
-	const imageStream = await new Promise((resolve, reject) => {
+const getImageStreamFromZipStream = async (zipStream) => {
+	return await new Promise((resolve, reject) => {
 		let found = false
 		zipStream.on('error', reject)
 		const unzipper = unzip.Parse()
 		unzipper.on('error', reject)
-		let stream = zipStream
-		if (!_.isUndefined(zipSize)) {
-			stream = stream.pipe(progress('[:bar] :current / :total bytes ; :percent', {total: zipSize, width: 40}))
-		}
-		stream.pipe(unzipper)
+		zipStream.pipe(unzipper)
 		unzipper.on('entry', (entry) => {
 			if (!found && (entry.type === 'File') && (entry.path === 'resin.img')) {
 				found = true
@@ -28,7 +23,6 @@ const getImageStreamFromZipStream = async (zipStream, zipSize) => {
 			}
 		})
 	})
-	return imageStream
 }
 
 export class ResinS3Source {
@@ -84,8 +78,7 @@ export class ResinS3Source {
 			throw new Error('`start` and `end` options are not supported')
 		}
 		const stream = this.s3.getObject(this._getS3Params(true)).createReadStream()
-		const zipSize = await this._getSize(true)
-		const imageStream = await getImageStreamFromZipStream(stream, zipSize)
+		const imageStream = await getImageStreamFromZipStream(stream)
 		return imageStream
 	}
 

@@ -1,7 +1,7 @@
-const _ = require('lodash')
-const Promise = require('bluebird')
-const partitioninfo = require('partitioninfo')
-const imagefs = require('resin-image-fs')
+import * as Promise from 'bluebird'
+import * as _ from 'lodash'
+import { getPartitions } from 'partitioninfo'
+import { interact } from 'resin-image-fs'
 
 const PARTITION_FIELDS = ['partition', 'to.partition', 'from.partition']
 const MBR_LAST_PRIMARY_PARTITION = 4
@@ -28,12 +28,11 @@ const getPartitionIndex = (partition) => {
 }
 
 const getDiskDeviceType = async (disk) => {
-	const partitions = await partitioninfo.getPartitions(disk)
+	const partitions = await getPartitions(disk)
 	let deviceType
 	for (let partition of partitions.partitions) {
 		if (partition.type === 14) {
-			//deviceType = await imagefs.readFile({ image: disk, partition: partition.index, path: '/device-type.json' }).catchReturn()
-			deviceType = await Promise.using(imagefs.interact(disk, partition.index), async (fs) => {
+			deviceType = await Promise.using(interact(disk, partition.index), async (fs) => {
 				return await fs.readFileAsync('/device-type.json').catchReturn()
 			})
 			if (deviceType) {
@@ -78,7 +77,6 @@ export const configure = async (disk, options = {}) => {
 	}
 
 	await Promise.each(operations, async (operation) => {
-		console.log('executing operation:\n', operation)
 		await executeOperation(operation, disk)
 	})
 }

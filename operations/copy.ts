@@ -1,6 +1,6 @@
-const _ = require('lodash')
-const Promise = require('bluebird')
-const imagefs = require('resin-image-fs')
+import * as Promise from 'bluebird'
+import * as _ from 'lodash'
+import { interact } from 'resin-image-fs'
 
 const copy = async (sourceFs, sourcePath, destinationFs, destinationPath) => {
 	const readStream = sourceFs.createReadStream(`/${sourcePath}`)
@@ -14,7 +14,7 @@ const copy = async (sourceFs, sourcePath, destinationFs, destinationPath) => {
 	})
 }
 
-exports.execute = async (operation, disk) => {
+export const execute = async (operation, disk) => {
 	const source = _.get(operation, 'from.partition')
 	const destination = _.get(operation, 'to.partition')
 	if (_.isUndefined(source) || _.isUndefined(destination)) {

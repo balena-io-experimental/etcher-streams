@@ -1,6 +1,6 @@
-const Promise = require('bluebird')
-const _ = require('lodash')
-const imagefs = require('resin-image-fs')
+import * as Promise from 'bluebird'
+import * as _ from 'lodash'
+import { interact } from 'resin-image-fs'
 
 const NETWORK_SETTINGS_KEYS = ['wifiSsid', 'wifiKey', 'ip', 'netmask', 'gateway', 'routeMetric']
 
@@ -90,7 +90,7 @@ export const execute = async (operation, disk) => {
 	// FIXME: no need to remove wifiSsid, wifiKey, ip, netmask and gateway once api is updated
 	config = _.omit(config, 'network', ...NETWORK_SETTINGS_KEYS)
 
-	await Promise.using(imagefs.interact(disk, operation.partition), async (fs) => {
+	await Promise.using(interact(disk, operation.partition), async (fs) => {
 		await fs.writeFileAsync('/config.json', JSON.stringify(config))
 		let index
 		for (index=0; index<networkConfigFiles.ethernet.length; index++) {
