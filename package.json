@@ -11,7 +11,7 @@
   "dependencies": {
     "aws-sdk": "^2.188.0",
     "bluebird": "^3.5.1",
-    "commander": "^2.14.1",
+    "command-line-args": "^5.0.2",
     "lodash": "^4.17.4",
     "mz": "^2.7.0",
     "resin-image-fs": "^4.1.2",
