@@ -1,19 +1,17 @@
 import { S3 } from 'aws-sdk'
 import * as Promise from 'bluebird'
+import * as _ from 'lodash'
 import * as fs from 'mz/fs'
 import * as commander from 'commander'
+import * as Path from 'path'
 import * as progress from 'stream-progressbar'
+import { parse as urlParse } from 'url'
 
 import { ConfiguredSource } from './configured-source'
 import { ResinS3Source } from './resin-s3-source'
 import { FileSource } from './file-source'
 
 import { version } from './package.json'
-
-const API_CONFIG = require('./rpi3.config.json')
-const DEVICE_TYPE = 'raspberry-pi'
-const VERSION = '2.9.6+rev1.prod'
-const S3_BUCKET = 'resin-staging-img'
 
 const s3 = new S3({
 	accessKeyId: null,
@@ -30,33 +28,35 @@ for (let key of [ 'getObject', 'headObject' ]) {
 }
 
 const getSource = (url) => {
-	const URL_REGEX = /^(file|resin-s3):\/\/(.*)/
-	const result = URL_REGEX.exec(url)
-	const protocol = result[1]
-	const path = result[2]
-	if (protocol === 'file') {
-		// file://resin.img
+	let { protocol, host, path } = urlParse(url)
+	if (protocol === null) {
+		// No protocol: assuming local file
+		protocol = 'file:'
+		path = Path.resolve(path)
+	}
+	if (protocol === 'file:') {
+		// file:///absolute/path/to/resin.img
 		return new FileSource(path)
-	} else if (protocol === 'resin-s3') {
+	} else if (protocol === 'resin-s3:') {
 		// resin-s3://resin-staging-img/raspberry-pi/2.9.6+rev1.prod
-		const [ bucket, deviceType, version ] = path.split('/')
+		const bucket = host
+		const [ deviceType, version ] = path.slice(1).split('/')
 		return new ResinS3Source(s3, bucket, deviceType, version)
 	}
-	// TODO: throw an error here
+	throw new Error(`Unsupported source: ${url}`)
 }
 
 const main = async (input, output, configPath) => {
-	const source = getSource(input)
+	let source = getSource(input)
 	const outputStream = fs.createWriteStream(output)
-	let config = API_CONFIG
-	try {
-		config = await fs.readFile(configPath)
-	} catch (e) {
+	const config = require('./' + configPath)
+
+	if (!_.isUndefined(config)) {
+		source = await ConfiguredSource.fromSource(source, config)
 	}
 
-	const configuredSource = await ConfiguredSource.fromSource(source, config)
-	const metadata = await configuredSource.getMetadata()
-	const stream = await configuredSource.createReadStream({})
+	const metadata = await source.getMetadata()
+	const stream = await source.createReadStream({})
 	stream
 	.pipe(progress('[:bar] :current / :total bytes ; :percent', {total: metadata.size, width: 40}))
 	.pipe(outputStream)

@@ -23,6 +23,6 @@ Accepted protocols for the source:
 
 The output only accepts a file path for now.
 
-You can omit the config, a default raspberry-pi config is provided in `rpi3.config.json` and will be used if you omit `-c`.
+You can omit the config.
 
 The config must be downloaded from the resin dashboard.
