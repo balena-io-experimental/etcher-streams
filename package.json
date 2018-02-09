@@ -1,5 +1,5 @@
 {
-  "name": "resin-make-image",
+  "name": "etcher-streams",
   "version": "0.0.1",
   "description": "Download and configure resinOS images from resin.io",
   "main": "index.js",
@@ -11,12 +11,13 @@
   "dependencies": {
     "aws-sdk": "^2.188.0",
     "bluebird": "^3.5.1",
-    "combine-stream": "0.0.4",
     "commander": "^2.14.1",
     "lodash": "^4.17.4",
     "mz": "^2.7.0",
-    "reconfix": "0.0.5",
+    "resin-image-fs": "^4.1.2",
     "stream-progressbar": "^1.0.2",
+    "ts-node": "^4.1.0",
+    "typescript": "^2.7.1",
     "unzip-stream": "^0.3.0"
   }
 }
