@@ -65,18 +65,18 @@ class SourceDisk extends Disk {
 
 	_getCapacity(callback) {
 		this.source.getMetadata()
-		.catch(callback)
 		.then((metadata) => {
 			callback(null, metadata.size);
-		});
+		})
+		.catch(callback);
 	}
 
 	_read(buffer, bufferOffset, length, fileOffset, callback) {
 		this.source.read(buffer, bufferOffset, length, fileOffset)
-		.catch(callback)
 		.then((bytesRead, buffer) => {
 			callback(null, bytesRead, buffer);
-		});
+		})
+		.catch(callback);
 	}
 }
 
