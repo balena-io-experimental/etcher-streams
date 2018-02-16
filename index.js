@@ -1,2 +1,2 @@
 require('ts-node/register');
-require('./make-image');
+require('./src/make-image');

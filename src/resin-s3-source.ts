@@ -1,64 +1,64 @@
-import * as Promise from 'bluebird'
-import * as _ from 'lodash'
-import * as unzip from 'unzip-stream'
+import * as Promise from 'bluebird';
+import * as _ from 'lodash';
+import * as unzip from 'unzip-stream';
 
 const getImageStreamFromZipStream = async (zipStream) => {
 	return await new Promise((resolve, reject) => {
-		let found = false
-		zipStream.on('error', reject)
-		const unzipper = unzip.Parse()
-		unzipper.on('error', reject)
-		zipStream.pipe(unzipper)
+		let found = false;
+		zipStream.on('error', reject);
+		const unzipper = unzip.Parse();
+		unzipper.on('error', reject);
+		zipStream.pipe(unzipper);
 		unzipper.on('entry', (entry) => {
 			if (!found && (entry.type === 'File') && (entry.path === 'resin.img')) {
-				found = true
-				resolve(entry)
+				found = true;
+				resolve(entry);
 			} else {
-				entry.autodrain()
+				entry.autodrain();
 			}
-		})
+		});
 		zipStream.on('finish', () => {
 			if (!found) {
-				reject(new Error("Can't find a resin.img file in this zip"))
+				reject(new Error("Can't find a resin.img file in this zip"));
 			}
-		})
-	})
-}
+		});
+	});
+};
 
 export class ResinS3Source {
 	constructor(s3, bucket, deviceType, version) {
-		this.s3 = s3
-		this.bucket = bucket
-		this.deviceType = deviceType
-		this.version = version
+		this.s3 = s3;
+		this.bucket = bucket;
+		this.deviceType = deviceType;
+		this.version = version;
 	}
 
 	_getS3Params(compressed) {
 		return {
 			Bucket: this.bucket,
 			Key: `images/${this.deviceType}/${this.version}/image/resin.img${compressed ? '.zip' : ''}`,
-		}
+		};
 	}
 
 	_getRange(start, end) {
 		if (!_.isUndefined(start) || !_.isUndefined(end)) {
-			start = start || 0
-			end = end || ''
-			return `bytes=${start}-${end}`
+			start = start || 0;
+			end = end || '';
+			return `bytes=${start}-${end}`;
 		}
 	}
-	
+
 	async _getSize(compressed) {
-		const data = await this.s3.headObject(this._getS3Params(compressed)).promise()
-		return data.ContentLength
+		const data = await this.s3.headObject(this._getS3Params(compressed)).promise();
+		return data.ContentLength;
 	}
 
 	async read(buffer, bufferOffset, length, sourceOffset) {
-		const params = this._getS3Params(false)
-		params.Range = this._getRange(sourceOffset, sourceOffset + length - 1)
-		const data = await this.s3.getObject(params).promise()
-		data.Body.copy(buffer, bufferOffset)
-		return { bytesRead: data.contentLength, buffer }
+		const params = this._getS3Params(false);
+		params.Range = this._getRange(sourceOffset, sourceOffset + length - 1);
+		const data = await this.s3.getObject(params).promise();
+		data.Body.copy(buffer, bufferOffset);
+		return { bytesRead: data.contentLength, buffer };
 	}
 
 	/**
@@ -73,19 +73,19 @@ export class ResinS3Source {
 		// Returns the whole image stream, `start`, `end` and `highWaterMark` options are ignored.
 		// This stream is created from the resin.img.zip file in the resin s3 bucket, that is why
 		// specifying a `start` and an `end` is not possible, the whole zip file will be read anyway.
-		options = options || {}
+		options = options || {};
 		if (!_.isUndefined(options.start) || !_.isUndefined(options.end)) {
-			throw new Error('`start` and `end` options are not supported')
+			throw new Error('`start` and `end` options are not supported');
 		}
-		const stream = this.s3.getObject(this._getS3Params(true)).createReadStream()
-		const imageStream = await getImageStreamFromZipStream(stream)
-		return imageStream
+		const stream = this.s3.getObject(this._getS3Params(true)).createReadStream();
+		const imageStream = await getImageStreamFromZipStream(stream);
+		return imageStream;
 	}
 
 	async getMetadata() {
 		return {
 			size: await this._getSize(false),
 			compressedSize: await this._getSize(true),
-		}
+		};
 	}
 }

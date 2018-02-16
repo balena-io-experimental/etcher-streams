@@ -4,6 +4,7 @@
   "description": "Download and configure resinOS images from resin.io",
   "main": "index.js",
   "scripts": {
+	  "lint": "resin-lint --typescript 1 src/",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -19,5 +20,8 @@
     "ts-node": "^4.1.0",
     "typescript": "^2.7.1",
     "unzip-stream": "^0.3.0"
+  },
+  "devDependencies": {
+    "resin-lint": "^1.5.0"
   }
 }
