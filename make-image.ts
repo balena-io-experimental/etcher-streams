@@ -3,12 +3,13 @@ import * as Promise from 'bluebird'
 import * as commandLineArgs from 'command-line-args'
 import * as fs from 'mz/fs'
 import * as Path from 'path'
-import * as progress from 'stream-progressbar'
+import * as ProgressBar from 'progress'
 import { parse as urlParse } from 'url'
 
 import { ConfiguredSource } from './configured-source'
-import { ResinS3Source } from './resin-s3-source'
+import { FileDestination } from './file-destination'
 import { FileSource } from './file-source'
+import { ResinS3Source } from './resin-s3-source'
 
 const s3 = new S3({
 	accessKeyId: null,
@@ -51,12 +52,18 @@ const getConfig = (path) => {
 
 const main = async (input, output, configPath, trimPartitions) => {
 	const source = getSource(input)
-	const outputStream = fs.createWriteStream(output)
 	const configuredSource = await ConfiguredSource.fromSource(source, getConfig(configPath), trimPartitions)
 	const metadata = await configuredSource.getMetadata()
-	const stream = await configuredSource.createReadStream({})
+	const stream = await configuredSource.createSparseReadStream({})
+	const destination = new FileDestination(output, metadata.size)
+	const outputStream = await destination.createSparseWriteStream()
+
+	const progressBar = new ProgressBar('[:bar] :current / :total bytes ; :percent', { total: stream.blockMap.imageSize, width: 40 })
+	stream.on('data', () => {
+		progressBar.tick(stream.bytesRead - progressBar.curr)
+	})
+
 	stream
-	.pipe(progress('[:bar] :current / :total bytes ; :percent', {total: metadata.size, width: 40}))
 	.pipe(outputStream)
 
 	await new Promise((resolve, reject) => {

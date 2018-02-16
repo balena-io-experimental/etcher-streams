@@ -1,12 +1,15 @@
+import { createFilterStream } from 'blockmap'
 import * as Promise from 'bluebird'
 import { Disk } from 'file-disk'
 import * as iisect from 'interval-intersection'
 import * as _ from 'lodash'
+import { getPartitions } from 'partitioninfo'
+import { interact } from 'resin-image-fs'
 import { Transform } from 'stream'
 
 import { configure } from './configure'
 
-class FileDiskTransformStream extends Transform {  // TODO: this should be in filedisk.Disk
+class DiskTransformStream extends Transform {  // TODO: this should be in filedisk.Disk
 	constructor(disk) {
 		super()
 		this.disk = disk
@@ -16,8 +19,10 @@ class FileDiskTransformStream extends Transform {  // TODO: this should be in fi
 	}
 
 	*_getKnownChunks() {
-		for (let chunk of this.disk.knownChunks) {  // TODO: filter out discards
-			yield chunk
+		for (let chunk of this.disk.knownChunks) {
+			if (!_.isUndefined(chunk.buffer)) {  // TODO: export DiscardDiskChunk and BufferDiskChunk in filedisk or move this class to filedisk
+				yield chunk
+			}
 		}
 	}
 
@@ -76,9 +81,10 @@ class SourceDisk extends Disk {
 }
 
 export class ConfiguredSource {
-	constructor(source, config) {
+	constructor(source, config, trimPartitions) {
 		this.source = source
 		this.config = config
+		this.trimPartitions = trimPartitions
 		this.disk = new SourceDisk(source)
 	}
 
@@ -108,24 +114,57 @@ export class ConfiguredSource {
 			throw new Error('Not implemented: start and end options')
 		}
 		const imageStream = await this.source.createReadStream()  // TODO: pass options
-		const transform = new FileDiskTransformStream(this.disk)
+		const transform = new DiskTransformStream(this.disk)
 		imageStream.pipe(transform)
 		return transform
 	}
 
-	// TODO: implement createSparseReadStream
+	async createSparseReadStream(options) {  // TODO: handle start and end
+		const stream = await this.createReadStream(options)
+		const blockmap = await this.disk.getBlockMapAsync(512, false)
+		console.log('blockmap', blockmap)
+		const transform = createFilterStream(blockmap, { verify: false })
+		stream.on('error', (error) => {
+			transform.emit('error', error)
+		})
+		stream.pipe(transform)
+		return transform
+	}
 
 	async getMetadata() {
 		return await this.source.getMetadata()  // TODO: additional metadata?
 	}
 
-	async configure() {
+	async _trimPartitions() {
+		if (!this.trimPartitions) {
+			return
+		}
+		const { partitions } = await getPartitions(this.disk, { includeExtended: false })
+		for (let partition of partitions) {
+			await Promise.using(interact(this.disk, partition.index), async (fs) => {
+				if (!_.isUndefined(fs.trimAsync)) {
+					await fs.trimAsync()
+				}
+			})
+		}
+		const discards = this.disk.getDiscardedChunks()
+		const discardedBytes = discards.map((d) => d.end - d.start + 1).reduce((a, b) => a + b)
+		const metadata = await this.getMetadata()
+		const percentage = Math.round(discardedBytes / metadata.size * 100)
+		console.log(`discarded ${discards.length} chunks, ${discardedBytes} bytes, ${percentage}% of the image`)
+	}
+
+	async _configure() {
+		if (!this.config) {
+			return
+		}
 		await configure(this.disk, { config: this.config })
 	}
 
-	static async fromSource(source, config) {
-		const configuredSource = new ConfiguredSource(source, config)
-		await configuredSource.configure()
+	static async fromSource(source, config, trimPartitions) {
+		const configuredSource = new ConfiguredSource(source, config, trimPartitions)
+		await configuredSource._configure()
+		await configuredSource._trimPartitions()
 		return configuredSource
 	}
 }
