@@ -61,18 +61,23 @@ const main = async (input, output, configPath, trimPartitions) => {
 	const outputStream = await destination.createSparseWriteStream();
 
 	const progressBar = new ProgressBar('[:bar] :current / :total bytes ; :percent', { total: stream.blockMap.imageSize, width: 40 });
-	stream.on('data', () => {
-		progressBar.tick(stream.bytesRead - progressBar.curr);
-	});
+	const updateProgressBar = () => {
+		if (progressBar.curr !== stream.bytesRead) {
+			progressBar.tick(stream.bytesRead - progressBar.curr);
+		}
+	};
+	const progressBarUpdateInterval = setInterval(updateProgressBar, 1000 / 25);
 
-	stream
-	.pipe(outputStream);
+	stream.pipe(outputStream);
 
 	await new Promise((resolve, reject) => {
 		outputStream.on('close', resolve);
 		outputStream.on('error', reject);
 		stream.on('error', reject);
 	});
+
+	updateProgressBar();
+	clearInterval(progressBarUpdateInterval);
 };
 
 const optionDefinitions = [
