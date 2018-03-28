@@ -16,7 +16,7 @@
     "lodash": "^4.17.4",
     "mz": "^2.7.0",
     "progress": "^2.0.0",
-    "resin-image-fs": "^4.1.2",
+    "resin-image-fs": "resin-io-modules/resin-image-fs#35-updates",
     "ts-node": "^4.1.0",
     "typescript": "^2.7.1",
     "unzip-stream": "^0.3.0"

@@ -2,44 +2,28 @@ import * as fs from 'mz/fs';
 import { Writable } from 'stream';
 
 class FileSparseWriteStream extends Writable {
-	constructor(path, size) {
+	private fd: number;
+
+	constructor(private path: string, private size: number) {
 		super({ objectMode: true });
-		this.path = path;
-		this.size = size;
-		this.fd = undefined;
-		this.ended = false;
+		this.on('finish', this.__close.bind(this));
 	}
 
-	async __createFile() {
+	async __close() {
+		await fs.close(this.fd);
+		this.emit('close');
+	}
+
+	async __write(chunk, enc) {
 		if (this.fd === undefined) {
 			await fs.truncate(this.path, this.size);
 			this.fd = await fs.open(this.path, 'w');
 		}
-	}
-
-	async __write(chunk, enc) {
-		await this.__createFile();
-		if (chunk !== undefined) {
-			await fs.write(this.fd, chunk, 0, chunk.length, chunk.position);
-		}
-		if (this.ended) {
-			await fs.close(this.fd);
-			this.emit('close');
-		}
-	}
-
-	async __end(chunk, enc) {
-		// .end() will be called before the last write callback, this means we can't close the fd here.
-		this.ended = true;
-		await this.__write(chunk, enc);
+		await fs.write(this.fd, chunk.buffer, 0, chunk.length, chunk.position);
 	}
 
 	_write(chunk, enc, callback) {
-		this.__write(chunk, enc).then(callback);
-	}
-
-	end(chunk, enc, callback) {
-		this.__end(chunk, enc).then(callback);
+		this.__write(chunk, enc).then(callback, callback);
 	}
 }
 

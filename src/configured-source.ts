@@ -1,6 +1,6 @@
 import { createFilterStream } from 'blockmap';
 import * as Promise from 'bluebird';
-import { Disk } from 'file-disk';
+import { Disk, DiskTransformStream } from 'file-disk';
 import * as iisect from 'interval-intersection';
 import * as _ from 'lodash';
 import { getPartitions } from 'partitioninfo';
@@ -8,49 +8,6 @@ import { interact } from 'resin-image-fs';
 import { Transform } from 'stream';
 
 import { configure } from './configure';
-
-class DiskTransformStream extends Transform {  // TODO: this should be in filedisk.Disk
-	constructor(disk) {
-		super();
-		this.disk = disk;
-		this.position = 0;
-		this.chunks = this._getKnownChunks();
-		this.currentChunk = this.chunks.next().value;
-	}
-
-	*_getKnownChunks() {
-		for (const chunk of this.disk.knownChunks) {
-			if (!_.isUndefined(chunk.buffer)) {  // TODO: export DiscardDiskChunk and BufferDiskChunk in filedisk or move this class to filedisk
-				yield chunk;
-			}
-		}
-	}
-
-	_transform(chunk, enc, cb) {
-		const start = this.position;
-		const end = start + chunk.length - 1;
-		const interval = [start, end];
-		while (this.currentChunk) {
-			if (iisect(this.currentChunk.interval(), interval)) {
-				const buf = this.currentChunk.data();
-				const startShift = this.currentChunk.start - start;
-				const endShift = this.currentChunk.end - end;
-				const sourceStart = -Math.min(startShift, 0);
-				const sourceEnd = buf.length - Math.max(endShift, 0);
-				const targetStart = Math.max(startShift, 0);
-				buf.copy(chunk, targetStart, sourceStart, sourceEnd);
-			}
-			if (this.currentChunk.end > end) {
-				break;
-			} else {
-				this.currentChunk = this.chunks.next().value;
-			}
-		}
-		this.push(chunk);
-		this.position = end + 1;
-		cb();
-	}
-}
 
 class SourceDisk extends Disk {
 	constructor(source) {
@@ -63,20 +20,12 @@ class SourceDisk extends Disk {
 		this.source = source;
 	}
 
-	_getCapacity(callback) {
-		this.source.getMetadata()
-		.then((metadata) => {
-			callback(null, metadata.size);
-		})
-		.catch(callback);
+	async _getCapacity() {
+		return (await this.source.getMetadata()).size;
 	}
 
-	_read(buffer, bufferOffset, length, fileOffset, callback) {
-		this.source.read(buffer, bufferOffset, length, fileOffset)
-		.then((bytesRead, buffer) => {
-			callback(null, bytesRead, buffer);
-		})
-		.catch(callback);
+	async _read(buffer, bufferOffset, length, fileOffset) {
+		return await this.source.read(buffer, bufferOffset, length, fileOffset);
 	}
 }
 
@@ -114,14 +63,14 @@ export class ConfiguredSource {
 			throw new Error('Not implemented: start and end options');
 		}
 		const imageStream = await this.source.createReadStream();  // TODO: pass options
-		const transform = new DiskTransformStream(this.disk);
+		const transform = this.disk.getTransformStream();
 		imageStream.pipe(transform);
 		return transform;
 	}
 
 	async createSparseReadStream(options) {  // TODO: handle start and end
 		const stream = await this.createReadStream(options);
-		const blockmap = await this.disk.getBlockMapAsync(512, false);
+		const blockmap = await this.disk.getBlockMap(512, false);
 		console.log('blockmap', blockmap);
 		const transform = createFilterStream(blockmap, { verify: false });
 		stream.on('error', (error) => {
