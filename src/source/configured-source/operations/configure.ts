@@ -1,58 +1,75 @@
-import * as Promise from 'bluebird';
+import * as Bluebird from 'bluebird';
+import { Disk } from 'file-disk';
 import * as _ from 'lodash';
+import { outdent } from 'outdent';
 import { interact } from 'resin-image-fs';
 
 const NETWORK_SETTINGS_KEYS = ['wifiSsid', 'wifiKey', 'ip', 'netmask', 'gateway', 'routeMetric'];
 
-const nmWifiConfig = (index, options) => {
-	let config =
-`[connection]
-id=resin-wifi-${pad(index)}
-type=wifi
+interface WifiConfig {
+	wifiSsid: string;
+	wifiKey?: string;
+	routeMetric?: number | string;
+	ip?: string;
+	netmask?: string;
+	gateway?: string;
+}
 
-[wifi]
-hidden=true
-mode=infrastructure
-ssid=${options.wifiSsid}
+const nmWifiConfig = (index: number, options: WifiConfig): string => {
+	let config = outdent`
+		[connection]
+		id=resin-wifi-${pad(index)}
+		type=wifi
 
-[ipv4]
-`;
+		[wifi]
+		hidden=true
+		mode=infrastructure
+		ssid=${options.wifiSsid}
+
+		[ipv4]
+	`;
 	if (options.routeMetric) {
-		config +=
-`route-metric=${options.routeMetric}
-`;
+		config += outdent`
+
+			route-metric=${options.routeMetric}
+		`;
 	}
 
 	if (options.ip && options.netmask && options.gateway) {
-		config +=
-`method=manual
-address1=${options.ip}/${options.netmask},${options.gateway}
-`;
+		config += outdent`
+
+			method=manual
+			address1=${options.ip}/${options.netmask},${options.gateway}
+		`;
 	} else {
-		config +=
-`method=auto
-`;
+		config += outdent`
+
+			method=auto
+		`;
 	}
 
-	config +=
-`
-[ipv6]
-addr-gen-mode=stable-privacy
-method=auto
-`;
+	config += outdent`
+
+
+		[ipv6]
+		addr-gen-mode=stable-privacy
+		method=auto
+	`;
 	if (options.wifiKey) {
-		config +=
-`
-[wifi-security]
-auth-alg=open
-key-mgmt=wpa-psk
-psk=${options.wifiKey}`;
+		config += outdent`
+
+
+			[wifi-security]
+			auth-alg=open
+			key-mgmt=wpa-psk
+			psk=${options.wifiKey}
+		`;
 	}
 	console.log('network config file:\n', config);
 	return config;
 };
 
-const createNetworkConfigFiles = (networks) => {
+const createNetworkConfigFiles = (networks: any) => {
 	return {
 		ethernet: _(networks)
 			.map('configuration')
@@ -67,11 +84,11 @@ const createNetworkConfigFiles = (networks) => {
 	};
 };
 
-const pad = (num) => {
+const pad = (num: number): string => {
 	return _.padStart(`${num}`, 2, '0');
 };
 
-export const execute = async (operation, disk) => {
+export const execute = async (operation: any, disk: Disk): Promise<void> => {
 	if (!operation.data) {
 		throw new Error('config.json data missing from operation options');
 	}
@@ -90,7 +107,7 @@ export const execute = async (operation, disk) => {
 	// FIXME: no need to remove wifiSsid, wifiKey, ip, netmask and gateway once api is updated
 	config = _.omit(config, 'network', ...NETWORK_SETTINGS_KEYS);
 
-	await Promise.using(interact(disk, operation.partition), async (fs) => {
+	await Bluebird.using(interact(disk, operation.partition), async (fs) => {
 		await fs.writeFileAsync('/config.json', JSON.stringify(config));
 		let index;
 		for (index=0; index<networkConfigFiles.ethernet.length; index++) {

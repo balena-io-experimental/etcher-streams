@@ -1,49 +1,65 @@
-import * as Promise from 'bluebird';
+import * as Bluebird from 'bluebird';
+import { Disk } from 'file-disk';
 import * as _ from 'lodash';
 import { getPartitions } from 'partitioninfo';
-import { interact } from 'resin-image-fs';
+import { interact, AsyncFsLike } from 'resin-image-fs';
+
+import { execute as configureAction } from './operations/configure';
+import { execute as copyAction } from './operations/copy';
 
 // This code comes from resin-image maker, converted to typescript and dropped Edison zip archive support.
 
+type OperationCommand = 'configure' | 'copy';
+
+interface Operation {
+	command: OperationCommand;
+	when: any;
+}
+	
 const PARTITION_FIELDS = ['partition', 'to.partition', 'from.partition'];
 const MBR_LAST_PRIMARY_PARTITION = 4;
 
-const executeOperation = async (operation, disk) => {
-	const operationModule = require('./operations/' + operation.command);
-	return await operationModule.execute(operation, disk);
+const ACTIONS = {
+	configure: configureAction,
+	copy: copyAction,
 };
 
-const getPartitionIndex = (partition) => {
+const executeOperation = async (operation: Operation, disk: Disk): Promise<void> => {
+	return await ACTIONS[operation.command](operation, disk);
+};
+
+const getPartitionIndex = (partition: number | { primary?: number, logical?: number }): number => {
 	// New device-type.json partition format: partition index
-	if (_.isNumber(partition)) {
+	if (typeof partition === 'number') {
 		return partition;
 	}
 	// Old device-type.json partition format: { primary: 4, logical: 1 }
-	if (_.isNumber(partition.logical)) {
+	if (typeof partition.logical === 'number') {
 		return partition.logical + MBR_LAST_PRIMARY_PARTITION;
 	}
 	// Old device-type.json partition format: { primary: 4 }
-	if (_.isNumber(partition.primary)) {
+	if (typeof partition.primary === 'number') {
 		return partition.primary;
 	}
 	throw new Error(`Invalid partition: ${partition}`);
 };
 
-const getDiskDeviceType = async (disk) => {
+const getDiskDeviceType = async (disk: Disk): Promise<any> => {
 	const partitions = await getPartitions(disk);
 	for (const partition of partitions.partitions) {
 		if (partition.type === 14) {
-			const deviceType = await Promise.using(interact(disk, partition.index), async (fs) => {
-				return await fs.readFileAsync('/device-type.json').catchReturn();
+			const deviceType = await Bluebird.using(interact(disk, partition.index), async (fs: AsyncFsLike) => {
+				return await fs.readFileAsync('/device-type.json').catchReturn(undefined);
 			});
 			if (deviceType) {
-				return JSON.parse(deviceType);
+				return JSON.parse(deviceType.toString());
 			}
 		}
 	}
 };
 
-export const configure = async (disk, options = {}) => {
+export const configure = async (disk: Disk, options: { [k: string]: any, config?: any } = {}): Promise<void> => {
+	console.log('options', options);
 	const deviceType = await getDiskDeviceType(disk);
 	console.log('device type read from disk image:\n', JSON.stringify(deviceType, null, 4));
 	let operations = _.cloneDeep(_.get(deviceType, 'configuration.operations', []));
@@ -57,9 +73,9 @@ export const configure = async (disk, options = {}) => {
 		});
 	}
 
-	operations = operations.filter((operation) => {
+	operations = operations.filter((operation: Operation) => {
 		if (_.isObject(operation.when)) {
-			for (key in operation.when) {
+			for (const key in operation.when) {
 				if (options[key] !== operations.when[key]) {
 					return false;
 				}
@@ -75,9 +91,6 @@ export const configure = async (disk, options = {}) => {
 				_.set(operation, field, getPartitionIndex(partition));
 			}
 		}
-	}
-
-	await Promise.each(operations, async (operation) => {
 		await executeOperation(operation, disk);
-	});
+	}
 };

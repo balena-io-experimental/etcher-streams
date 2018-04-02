@@ -4,24 +4,28 @@
   "description": "Download and configure resinOS images from resin.io",
   "main": "index.js",
   "scripts": {
-	  "lint": "resin-lint --typescript 1 src/",
+    "lint": "resin-lint --typescript 1 src typings",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/bluebird": "^3.5.20",
+    "@types/node": "^8.10.1",
     "aws-sdk": "^2.188.0",
     "bluebird": "^3.5.1",
     "command-line-args": "^5.0.2",
     "lodash": "^4.17.4",
-    "mz": "^2.7.0",
+    "outdent": "^0.5.0",
     "progress": "^2.0.0",
-    "resin-image-fs": "resin-io-modules/resin-image-fs#35-updates",
+    "resin-image-fs": "^5.0.0",
     "ts-node": "^4.1.0",
     "typescript": "^2.7.1",
     "unzip-stream": "^0.3.0"
   },
   "devDependencies": {
+    "@types/command-line-args": "^4.0.2",
+    "@types/lodash": "^4.14.106",
     "resin-lint": "^1.5.0"
   }
 }
