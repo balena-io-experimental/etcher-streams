@@ -1,39 +1,58 @@
+import * as Bluebird from 'bluebird';
 import { ReadResult } from 'file-disk';
-import { createReadStream, fstat, open, read } from 'fs';
+import { close, createReadStream, fstat, open, read } from 'fs';
+import { Url } from 'url';
 import { promisify } from 'util';
 
-import { Source, SourceMetadata } from './source';
+import { RandomReadableSource, SourceMetadata } from './source';
 
+const closeAsync = promisify(close);
 const openAsync = promisify(open);
 const readAsync = promisify(read);
 const fstatAsync = promisify(fstat);
 
-export class FileSource implements Source {
-	private fd: number;
+export class FileSource extends RandomReadableSource {
+	static protocol: string = 'file:';
 
-	constructor(private path: string) {
-	}
-
-	async _getFd(): Promise<number> {
-		if (this.fd === undefined) {
-			this.fd = await openAsync(this.path, 'r');
-		}
-		return this.fd;
+	constructor(private fd: number) {
+		super();
 	}
 
 	async read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult> {
-		const fd = await this._getFd();
-		return await readAsync(fd, buffer, bufferOffset, length, sourceOffset);
+		return await readAsync(this.fd, buffer, bufferOffset, length, sourceOffset);
 	}
 
 	async createReadStream(): Promise<NodeJS.ReadableStream> {
-		return createReadStream('', { fd: await this._getFd() });
+		return createReadStream('', { fd: this.fd, autoClose: false });
 	}
 
 	async getMetadata(): Promise<SourceMetadata> {
-		const fd = await this._getFd();
 		return {
-			size: (await fstatAsync(fd)).size,
+			size: (await fstatAsync(this.fd)).size,
 		};
 	}
+
+	static fromURL(parsed: Url): Bluebird.Disposer<FileSource> {
+		if (parsed.path === undefined) {
+			throw new Error('Missing path');
+		}
+		return openAsync(parsed.path, 'r')
+		.then((fd: number) => {
+			return Bluebird.resolve(new FileSource(fd))
+			.disposer(() => {
+				return closeAsync(fd);
+			});
+		});
+	}
 }
+
+//export class TemporaryFileSource extends FileSource {
+//	async close(): Promise<void> {
+//		await super.close();
+//		await unlinkAsync(this.path);
+//	}
+//}
+//
+//export const makeSourceRandomReadable(source: Source): Bluebird.Disposer<RandomReadableSource> {
+//	tmp.file
+//}

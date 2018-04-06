@@ -1,33 +1,26 @@
+import * as Bluebird from 'bluebird';
 import { Chunk } from 'blockmap';
-import { createWriteStream, close, open, truncate, write } from 'fs';
+import { ReadResult, WriteResult } from 'file-disk';
+import { createWriteStream, close, fsync, open, read, truncate, write } from 'fs';
 import { Writable } from 'stream';
+import { Url } from 'url';
 import { promisify } from 'util';
 
-import { Destination, SparseWriteStream } from './destination';
+import { RandomAccessibleDestination, SparseWriteStream } from './destination';
 
 const closeAsync = promisify(close);
+const fsyncAsync = promisify(fsync);
 const openAsync = promisify(open);
+const readAsync = promisify(read);
 const truncateAsync = promisify(truncate);
 const writeAsync = promisify(write);
 
 export class FileSparseWriteStream extends Writable implements SparseWriteStream {
-	private fd: number;
-
-	constructor(private path: string, private size: number) {
+	constructor(private fd: number) {
 		super({ objectMode: true });
-		this.on('finish', this.__close.bind(this));
 	}
 
-	async __close(): Promise<void> {
-		await closeAsync(this.fd);
-		this.emit('close');
-	}
-
-	async __write(chunk: Chunk, enc: string): Promise<void> {
-		if (this.fd === undefined) {
-			await truncateAsync(this.path, this.size);
-			this.fd = await openAsync(this.path, 'w');
-		}
+	private async __write(chunk: Chunk, enc: string): Promise<void> {
 		await writeAsync(this.fd, chunk.buffer, 0, chunk.length, chunk.position);
 	}
 
@@ -36,15 +29,38 @@ export class FileSparseWriteStream extends Writable implements SparseWriteStream
 	}
 }
 
-export class FileDestination implements Destination {
-	constructor(private path: string, private size: number) {
+export class FileDestination extends RandomAccessibleDestination {
+	constructor(private fd: number, public size: number) {
+		super();
 	}
 
 	async createWriteStream(): Promise<NodeJS.WritableStream> {
-		return createWriteStream(this.path);
+		return createWriteStream('', { fd: this.fd, autoClose: false });
 	}
 
 	async createSparseWriteStream(): Promise<FileSparseWriteStream> {
-		return new FileSparseWriteStream(this.path, this.size);
+		return new FileSparseWriteStream(this.fd);
+	}
+
+	async read(buffer: Buffer, bufferOffset: number, length: number, fileOffset: number): Promise<ReadResult> {
+		return await readAsync(this.fd, buffer, bufferOffset, length, fileOffset);
+	}
+
+	async write(buffer: Buffer, bufferOffset: number, length: number, fileOffset: number): Promise<WriteResult> {
+		return await writeAsync(this.fd, buffer, bufferOffset, length, fileOffset);
+	}
+
+	async flush(): Promise<void> {
+		await fsyncAsync(this.fd);
+	}
+
+	static createDisposer(path: string, size: number): Bluebird.Disposer<FileDestination> {
+		return openAsync(path, 'w+')
+		.then((fd: number) => {
+			return Bluebird.resolve(new FileDestination(fd, size))
+			.disposer(() => {
+				return closeAsync(fd);
+			});
+		});
 	}
 }

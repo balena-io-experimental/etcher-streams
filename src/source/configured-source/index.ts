@@ -6,13 +6,14 @@ import { getPartitions } from 'partitioninfo';
 import { interact, AsyncFsLike } from 'resin-image-fs';
 import { Transform } from 'stream';
 
-import { configure } from './configure';
-import { Source, SourceMetadata } from '../source';
+import { RandomReadableSource, SourceMetadata } from '../source';
 
 const BLOCK_SIZE = 512;
 
-class SourceDisk extends Disk {
-	constructor(private source: Source) {
+export type ConfigureFunction = (disk: Disk, config: any) => Promise<void>;
+
+export class SourceDisk extends Disk {
+	constructor(private source: RandomReadableSource) {
 		super(
 			true,  // readOnly
 			true,  // recordWrites
@@ -37,10 +38,11 @@ class SourceDisk extends Disk {
 	}
 }
 
-export class ConfiguredSource implements Source {
+export class ConfiguredSource extends RandomReadableSource {
 	private disk: SourceDisk;
 
-	private constructor(private source: Source, private config: any, private trimPartitions: boolean) {
+	private constructor(private source: RandomReadableSource) {
+		super();
 		this.disk = new SourceDisk(source);
 	}
 
@@ -74,10 +76,7 @@ export class ConfiguredSource implements Source {
 		return await this.source.getMetadata();
 	}
 
-	async _trimPartitions(): Promise<void> {
-		if (!this.trimPartitions) {
-			return;
-		}
+	private async trimPartitions(): Promise<void> {
 		const { partitions } = await getPartitions(this.disk, { includeExtended: false });
 		for (const partition of partitions) {
 			await Bluebird.using(interact(this.disk, partition.index), async (fs: AsyncFsLike) => {
@@ -93,23 +92,20 @@ export class ConfiguredSource implements Source {
 		})
 		.reduce((a: number, b: number) => {
 			return a + b;
-		});
+		});  // TODO: discarededBytes in metadata ?
 		const metadata = await this.getMetadata();
 		const percentage = Math.round(discardedBytes / metadata.size * 100);
 		console.log(`discarded ${discards.length} chunks, ${discardedBytes} bytes, ${percentage}% of the image`);
 	}
 
-	async _configure(): Promise<void> {
-		if (!this.config) {
-			return;
+	static async fromSource(source: RandomReadableSource, shouldTrimPartitions: boolean, configure?: ConfigureFunction, config?: any): Promise<ConfiguredSource> {
+		const configuredSource = new ConfiguredSource(source);
+		if (configure !== undefined) {
+			await configure(configuredSource.disk, config);
 		}
-		await configure(this.disk, { config: this.config });
-	}
-
-	static async fromSource(source: Source, config: any, trimPartitions: boolean): Promise<ConfiguredSource> {
-		const configuredSource = new ConfiguredSource(source, config, trimPartitions);
-		await configuredSource._configure();
-		await configuredSource._trimPartitions();
+		if (shouldTrimPartitions) {
+			await configuredSource.trimPartitions();
+		}
 		return configuredSource;
 	}
 }

@@ -5,6 +5,7 @@ declare module 'unzip-stream' {
 	class ZipStreamEntry extends PassThrough {
 		type: string;
 		path: string;
+		size: number;
 		autodrain(): void;
 	}
 
