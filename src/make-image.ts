@@ -1,4 +1,5 @@
-import { S3 } from 'aws-sdk';
+import { FilterStream } from 'blockmap';
+import * as Bluebird from 'bluebird';
 import * as commandLineArgs from 'command-line-args';
 import { readFile } from 'fs';
 import * as Path from 'path';
@@ -6,95 +7,146 @@ import * as ProgressBar from 'progress';
 import { parse as urlParse } from 'url';
 import { promisify } from 'util';
 
+import { Destination, DestinationDisk, ProgressEvent, RandomAccessibleDestination, SparseWriteStream } from './destination/destination';
 import { FileDestination } from './destination/file-destination';
 import { ConfiguredSource } from './source/configured-source';
-import { FileSource } from './source/file-source';
+import { configure as legacyConfigure } from './source/configured-source/configure';
+import { FileSource, makeSourceRandomReadable } from './source/file-source';
 import { ResinS3Source } from './source/resin-s3-source';
-import { Source } from './source/source';
+import { RandomReadableSource, Source, SourceMetadata } from './source/source';
+import { ZipSource } from './source/zip-source';
 
 const readFileAsync = promisify(readFile);
 
-const s3Config: S3.Types.ClientConfiguration = {
-	accessKeyId: '',
-	secretAccessKey: '',
-	s3ForcePathStyle: true,
-	sslEnabled: false,
-};
-const s3 = new S3(s3Config);
+// Sources that only accept some specific extensions must come first.
+const SOURCE_TYPES = [ ZipSource, FileSource, ResinS3Source ];
 
-// Make it work without accessKeyId and secretAccessKey
-s3.getObject = (...args: any[]) => {
-	return s3.makeUnauthenticatedRequest('getObject', ...args);
-};
-s3.headObject = (...args: any[]) => {
-	return s3.makeUnauthenticatedRequest('headObject', ...args);
-};
-
-class UnsupportedSource extends Error {
-	constructor(url: string) {
-		super(`Unsupported source: ${url}`);
-	}
-}
-
-const getSource = (url: string): Source => {
+const getSource = (url: string): Promise<Bluebird.Disposer<Source>> => {
 	const parsed = urlParse(url);
-	let { protocol, path } = parsed;
-	if (path === undefined) {
-		throw new UnsupportedSource(url);
-	}
-	if (protocol === null) {
-		// No protocol: assuming local file
-		protocol = 'file:';
-		path = Path.resolve(path);
-	}
-	if (protocol === 'file:') {
-		// file:///absolute/path/to/resin.img
-		return new FileSource(path);
-	} else if (protocol === 'resin-s3:') {
-		// resin-s3://resin-staging-img/raspberry-pi/2.9.6+rev1.prod
-		if (parsed.host === undefined) {
-			throw new UnsupportedSource(url);
+	for (const sourceType of SOURCE_TYPES) {
+		if (sourceType.canOpenURL(parsed)) {
+			return sourceType.fromURL(parsed);
 		}
-		const bucket = parsed.host;
-		const [ deviceType, version ] = path.slice(1).split('/');
-		return new ResinS3Source(s3, bucket, deviceType, version);
 	}
-	throw new UnsupportedSource(url);
+	throw new Error(`Unsupported source: ${url}`);
 };
 
 const getConfig = async (path: string) => {
 	if (path) {
 		const data = await readFileAsync(path);
-		return JSON.parse(data.toString());
+		const config = JSON.parse(data.toString());
+		return { config };
 	}
 };
 
-const main = async (input: string, output: string, configPath: string, trimPartitions: boolean): Promise<void> => {
-	const source = getSource(input);
-	const configuredSource = await ConfiguredSource.fromSource(source, await getConfig(configPath), trimPartitions);
-	const metadata = await configuredSource.getMetadata();
-	const stream = await configuredSource.createSparseReadStream();
-	const destination = new FileDestination(output, metadata.size);
-	const outputStream = await destination.createSparseWriteStream();
+const calculateETA = (start: number, progress: ProgressEvent, size?: number, compressedSize?: number): number => {
+	// TODO: handle case when only parts of source are read (progress has bytes)
+	const duration = (Date.now() - start) / 1000;
+	let left, speed;
+	if ((compressedSize !== undefined) && (progress.compressedBytes !== undefined)) {
+		left = compressedSize - progress.compressedBytes;
+		speed = progress.compressedBytes / duration;
+	} else if ((size !== undefined) && (progress.bytes !== undefined)) {
+		left = size - progress.bytes;
+		speed = progress.bytes / duration;
+	} else {
+		// TODO: throw ?
+		return Infinity;
+	}
+	return left / speed;
+};
 
-	const progressBar = new ProgressBar('[:bar] :current / :total bytes ; :percent', { total: stream.blockMap.imageSize, width: 40 });
-	const updateProgressBar = () => {
-		if (progressBar.curr !== stream.bytesRead) {
-			progressBar.tick(stream.bytesRead - progressBar.curr);
-		}
+const createProgressBar = (sourceStream: NodeJS.ReadableStream, destinationStream: NodeJS.WritableStream, sourceMetadata: SourceMetadata): void => {
+	const start = Date.now();
+	const progressBar = new ProgressBar(
+		'[:bar] :current / :total bytes ; :percent ; :timeLeft seconds left',
+		{ total: sourceMetadata.size, width: 40 },
+	);
+	const updateProgressBar = (progress: ProgressEvent) => {
+		const timeLeft = Math.round(calculateETA(start, progress, sourceMetadata.size, sourceMetadata.compressedSize));
+		progressBar.tick(progress.position - progressBar.curr, { timeLeft });
 	};
-	const progressBarUpdateInterval = setInterval(updateProgressBar, 1000 / 25);
+	sourceStream.on('progress', updateProgressBar);
+};
 
-	stream.pipe(outputStream);
+const pipeSourceToDestination = async (source: Source, destination: Destination, config: any, trimPartitions: boolean): Promise<void> => {
+	// This is a bit complex as tries to pipe any source to any destination.
+	// Concrete use cases will be simpler.
+	//
+	// pipe_streams                = sparse if should_trim else normal
+	// configure_destination       = have_config AND NOT source_random_readable AND NOT should_trim
+	// configure_source            = have_config AND not configure_destination
+	// make_source_random_readable = NOT source_random_readable AND (should_trim OR configure_source)
+	const mustConfigureDestination = (
+		(config !== undefined) &&
+		!(source instanceof RandomReadableSource) &&
+		!trimPartitions
+	);
+	if (mustConfigureDestination && !(destination instanceof RandomAccessibleDestination)) {
+		// The only implemented destination for now is randomly accessible, shouldn't happen.
+		throw new Error('Must configure destination, but it is not randomly accessible');
+	}
+	const mustConfigureSource = (
+		(config !== undefined) &&
+		!mustConfigureDestination
+	);
+	const mustMakeSourceRandomReadable = (
+		!(source instanceof RandomReadableSource) &&
+		(trimPartitions || mustConfigureSource)
+	);
+	if (mustMakeSourceRandomReadable) {
+		await Bluebird.using(makeSourceRandomReadable(source), async (source: RandomReadableSource): Promise<void> => {
+			await pipeSourceToDestination(source, destination, config, trimPartitions);
+		});
+		return;
+	}
+	if (mustConfigureSource) {
+		if (!(source instanceof RandomReadableSource)) {
+			// Make tsc happy, but this should never happen
+			throw new Error('Should not happen');
+		}
+		source = await ConfiguredSource.fromSource(source, trimPartitions, legacyConfigure, config);
+	}
+	let stream, outputStream;
+	if ((source instanceof ConfiguredSource) && trimPartitions) {
+		stream = await source.createSparseReadStream();
+		outputStream = await destination.createSparseWriteStream();
+	} else {
+		stream = await source.createReadStream();
+		outputStream = await destination.createWriteStream();
+	}
+	const metadata = await source.getMetadata();
+	createProgressBar(stream, outputStream, metadata);
+	await pipeAndWait(stream, outputStream);
+	if (mustConfigureDestination) {
+		if (!(destination instanceof RandomAccessibleDestination)) {
+			// Make tsc happy
+			// This can't happen, an error would have been thrown above.
+			throw new Error('Should not happen');
+		}
+		const destinationDisk = new DestinationDisk(destination);
+		await legacyConfigure(destinationDisk, config);
+	}
+};
 
+const pipeAndWait = async (source: NodeJS.ReadableStream, destination: NodeJS.WritableStream): Promise<void> => {
 	await new Promise((resolve: () => void, reject: (err: Error) => void) => {
-		outputStream.on('close', resolve);
-		outputStream.on('error', reject);
-		stream.on('error', reject);
+		destination.on('finish', resolve);
+		destination.on('error', reject);
+		source.on('error', reject);
+		source.pipe(destination);
 	});
+};
 
-	updateProgressBar();
-	clearInterval(progressBarUpdateInterval);
+const main = async (input: string, output: string, configPath: string, trimPartitions: boolean): Promise<void> => {
+	await Bluebird.using(
+		getSource(input),
+		FileDestination.createDisposer(output),
+		getConfig(configPath),
+		async (source: Source, destination: Destination, config: any): Promise<void> => {
+			await pipeSourceToDestination(source, destination, config, trimPartitions);
+		},
+	);
 };
 
 const optionDefinitions = [
@@ -105,4 +157,14 @@ const optionDefinitions = [
 ];
 const { input, output, config, trimPartitions } = commandLineArgs(optionDefinitions, { camelCase: true } as commandLineArgs.Options);
 // TODO: https://www.npmjs.com/package/command-line-args#usage-guide-generation
-main(input, output, config, trimPartitions);
+
+const wrapper = async (): Promise<void> => {
+	try {
+		await main(input, output, config, trimPartitions);
+	} catch (error) {
+		console.error('There was an error', error);
+		process.exitCode = 1;
+	}
+};
+
+wrapper();

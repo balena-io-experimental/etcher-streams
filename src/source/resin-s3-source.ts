@@ -1,31 +1,29 @@
+import * as Bluebird from 'bluebird';
 import * as AWS from 'aws-sdk';
 import { ReadResult } from 'file-disk';
 import * as _ from 'lodash';
-import * as unzip from 'unzip-stream';
+import { ZipStreamEntry } from 'unzip-stream';
+import { Url } from 'url';
 
-import { Source, SourceMetadata } from './source';
+import { RandomReadableSource, RandomReadableSourceMetadata } from './source';
+import { getFileStreamFromZipStream } from '../zip';
 
-const getImageStreamFromZipStream = async (zipStream: NodeJS.ReadableStream): Promise<NodeJS.ReadableStream> => {
-	return await new Promise((resolve: (entry: unzip.ZipStreamEntry ) => void, reject: (err: Error) => void) => {
-		let found = false;
-		zipStream.on('error', reject);
-		const unzipper = unzip.Parse();
-		unzipper.on('error', reject);
-		zipStream.pipe(unzipper);
-		unzipper.on('entry', (entry: unzip.ZipStreamEntry ) => {
-			if (!found && (entry.type === 'File') && (entry.path === 'resin.img')) {
-				found = true;
-				resolve(entry);
-			} else {
-				entry.autodrain();
-			}
-		});
-		zipStream.on('finish', () => {
-			if (!found) {
-				reject(new Error("Can't find a resin.img file in this zip"));
-			}
-		});
-	});
+const getS3Client = (): AWS.S3 => {
+	const s3Config: AWS.S3.Types.ClientConfiguration = {
+		accessKeyId: '',
+		secretAccessKey: '',
+		s3ForcePathStyle: true,
+		sslEnabled: false,
+	};
+	const s3 = new AWS.S3(s3Config);
+	// Make it work without accessKeyId and secretAccessKey
+	s3.getObject = (...args: any[]) => {
+		return s3.makeUnauthenticatedRequest('getObject', ...args);
+	};
+	s3.headObject = (...args: any[]) => {
+		return s3.makeUnauthenticatedRequest('headObject', ...args);
+	};
+	return s3;
 };
 
 export class NoContentLength extends Error {
@@ -34,35 +32,45 @@ export class NoContentLength extends Error {
 	}
 }
 
-export class ResinS3Source implements Source {
-	constructor(private s3: AWS.S3, readonly bucket: string, readonly deviceType: string, readonly version: string) {
+export class ResinS3Source extends RandomReadableSource {
+	static protocol: string = 'resin-s3:';
+
+	private static s3: AWS.S3 = getS3Client();
+	private entry: ZipStreamEntry;
+
+	constructor(readonly bucket: string, readonly deviceType: string, readonly version: string) {
+		super();
 	}
 
-	_getS3Params(compressed: boolean): AWS.S3.Types.GetObjectRequest {
+	private getS3Params(compressed: boolean): AWS.S3.Types.GetObjectRequest {
 		return {
 			Bucket: this.bucket,
 			Key: `images/${this.deviceType}/${this.version}/image/resin.img${compressed ? '.zip' : ''}`,
 		};
 	}
 
-	_getRange(start?: number, end?: number): string | undefined {
+	private getRange(start?: number, end?: number): string | undefined {
 		if (!_.isUndefined(start) || !_.isUndefined(end)) {
 			return `bytes=${start || 0}-${end || ''}`;
 		}
 	}
 
-	async _getSize(compressed: boolean): Promise<number> {
-		const data = await this.s3.headObject(this._getS3Params(compressed)).promise();
-		if (data.ContentLength === undefined) {
-			throw new NoContentLength(this);
+	private async getEntry(): Promise<ZipStreamEntry> {
+		if (this.entry === undefined) {
+			const stream = ResinS3Source.s3.getObject(this.getS3Params(true)).createReadStream();
+			this.entry = await getFileStreamFromZipStream(stream, 'resin.img');
 		}
-		return data.ContentLength;
+		return this.entry;
+	}
+
+	private async getSize(compressed: boolean): Promise<number> {
+		return (await this.getEntry()).size;
 	}
 
 	async read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult> {
-		const params = this._getS3Params(false);
-		params.Range = this._getRange(sourceOffset, sourceOffset + length - 1);
-		const data = await this.s3.getObject(params).promise();
+		const params = this.getS3Params(false);
+		params.Range = this.getRange(sourceOffset, sourceOffset + length - 1);
+		const data = await ResinS3Source.s3.getObject(params).promise();
 		if (data.ContentLength === undefined) {
 			throw new NoContentLength(this);
 		}
@@ -71,14 +79,28 @@ export class ResinS3Source implements Source {
 	}
 
 	async createReadStream(): Promise<NodeJS.ReadableStream> {
-		const stream = this.s3.getObject(this._getS3Params(true)).createReadStream();
-		return await getImageStreamFromZipStream(stream);
+		return await this.getEntry();
 	}
 
-	async getMetadata(): Promise<SourceMetadata> {
+	async getMetadata(): Promise<RandomReadableSourceMetadata> {
+		const entry = await this.getEntry();
 		return {
-			size: await this._getSize(false),
-			compressedSize: await this._getSize(true),
+			size: entry.size,
+			compressedSize: entry.compressedSize,
 		};
+	}
+
+	static async fromURL(parsed: Url): Promise<Bluebird.Disposer<ResinS3Source>> {
+		// resin-s3://resin-staging-img/raspberry-pi/2.9.6+rev1.prod
+		const bucket = parsed.host;
+		if (bucket === undefined) {
+			throw new Error('Missing bucket');
+		}
+		if (parsed.path === undefined) {
+			throw new Error('Missing device type and version');
+		}
+		const [ deviceType, version ] = parsed.path.slice(1).split('/');
+		const source = new ResinS3Source(bucket, deviceType, version);
+		return Bluebird.resolve(source).disposer(_.noop);
 	}
 }
