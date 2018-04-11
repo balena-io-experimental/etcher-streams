@@ -9,7 +9,7 @@ import { getFileStreamFromZipStream } from '../zip';
 
 export class ZipSource extends Source {
 	static protocol: string = 'file:';
-	static extensions: string[] = [ '.zip' ];  // TODO: use
+	static extensions: string[] = [ '.zip' ];
 	private entry: ZipStreamEntry;
 
 	constructor(private path: string) {
@@ -34,7 +34,7 @@ export class ZipSource extends Source {
 		};
 	}
 
-	static fromURL(parsed: Url): Bluebird.Disposer<ZipSource> {
+	static async fromURL(parsed: Url): Promise<Bluebird.Disposer<ZipSource>> {
 		if (parsed.path === undefined) {
 			throw new Error('Missing path');
 		}

@@ -5,7 +5,7 @@ import * as _ from 'lodash';
 import * as unzip from 'unzip-stream';
 import { Url } from 'url';
 
-import { RandomReadableSource, SourceMetadata } from './source';
+import { RandomReadableSource, RandomReadableSourceMetadata } from './source';
 import { getFileStreamFromZipStream } from '../zip';
 
 const getS3Client = (): AWS.S3 => {
@@ -78,14 +78,14 @@ export class ResinS3Source extends RandomReadableSource {
 		return await getFileStreamFromZipStream(stream, 'resin.img');
 	}
 
-	async getMetadata(): Promise<SourceMetadata> {
+	async getMetadata(): Promise<RandomReadableSourceMetadata> {
 		return {
 			size: await this.getSize(false),
 			compressedSize: await this.getSize(true),
 		};
 	}
 
-	static fromURL(parsed: Url): Bluebird.Disposer<ResinS3Source> {
+	static async fromURL(parsed: Url): Promise<Bluebird.Disposer<ResinS3Source>> {
 		// resin-s3://resin-staging-img/raspberry-pi/2.9.6+rev1.prod
 		const bucket = parsed.host;
 		if (bucket === undefined) {

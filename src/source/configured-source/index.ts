@@ -6,7 +6,7 @@ import { getPartitions } from 'partitioninfo';
 import { interact, AsyncFsLike } from 'resin-image-fs';
 import { Transform } from 'stream';
 
-import { RandomReadableSource, SourceMetadata } from '../source';
+import { RandomReadableSource, RandomReadableSourceMetadata } from '../source';
 
 const BLOCK_SIZE = 512;
 
@@ -72,7 +72,7 @@ export class ConfiguredSource extends RandomReadableSource {
 		return transform;
 	}
 
-	async getMetadata(): Promise<SourceMetadata> {
+	async getMetadata(): Promise<RandomReadableSourceMetadata> {
 		return await this.source.getMetadata();
 	}
 

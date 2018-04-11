@@ -2,7 +2,7 @@ import * as Bluebird from 'bluebird';
 import { Disk } from 'file-disk';
 import * as _ from 'lodash';
 import { outdent } from 'outdent';
-import { interact } from 'resin-image-fs';
+import { interact, AsyncFsLike } from 'resin-image-fs';
 
 const NETWORK_SETTINGS_KEYS = ['wifiSsid', 'wifiKey', 'ip', 'netmask', 'gateway', 'routeMetric'];
 
@@ -107,7 +107,7 @@ export const execute = async (operation: any, disk: Disk): Promise<void> => {
 	// FIXME: no need to remove wifiSsid, wifiKey, ip, netmask and gateway once api is updated
 	config = _.omit(config, 'network', ...NETWORK_SETTINGS_KEYS);
 
-	await Bluebird.using(interact(disk, operation.partition), async (fs) => {
+	await Bluebird.using(interact(disk, operation.partition), async (fs: AsyncFsLike) => {
 		await fs.writeFileAsync('/config.json', JSON.stringify(config));
 		let index;
 		for (index=0; index<networkConfigFiles.ethernet.length; index++) {

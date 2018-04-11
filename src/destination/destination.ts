@@ -1,4 +1,3 @@
-import * as Bluebird from 'bluebird';
 import { Chunk } from 'blockmap';
 import { Disk, ReadResult, WriteResult } from 'file-disk';
 import { Url } from 'url';

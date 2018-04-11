@@ -10,7 +10,7 @@ import { Destination } from './destination/destination';
 import { FileDestination } from './destination/file-destination';
 import { ConfiguredSource } from './source/configured-source';
 import { configure as legacyConfigure } from './source/configured-source/configure';
-import { FileSource } from './source/file-source';
+import { FileSource, makeSourceRandomReadable  } from './source/file-source';
 import { ResinS3Source } from './source/resin-s3-source';
 import { RandomReadableSource, Source } from './source/source';
 import { ZipSource } from './source/zip-source';
@@ -20,7 +20,7 @@ const readFileAsync = promisify(readFile);
 // Sources that only accept some specific extensions must come first.
 const SOURCE_TYPES = [ ZipSource, FileSource, ResinS3Source ];
 
-const getSource = (url: string): Bluebird.Disposer<Source> => {
+const getSource = (url: string): Promise<Bluebird.Disposer<Source>> => {
 	const parsed = urlParse(url);
 	for (const sourceType of SOURCE_TYPES) {
 		if (sourceType.canOpenURL(parsed)) {
@@ -38,39 +38,47 @@ const getConfig = async (path: string) => {
 	}
 };
 
-//const wololo = async (source: Source, destination: Destination, config: any, trimPartitions: boolean) {
-//	if ((config === undefined) && !trimPartitions) {
-//		const rs = await source.createReadStream();
-//		const ws = await destination.createWriteStream();
-//		await new Promise((resolve: () => void, reject: (err: Error) => void) => {
-//			rs.on('error', reject);
-//			ws.on('error', reject);
-//			ws.on('close', resolve);
-//			rs.pipe(ws);
-//		})
-//		return
-//	}
-//	if (!(source instanceof RandomReadableSource)) {
-//		const configuredSource = 
-//}
-
 const pipeSourceToDestination = async (source: Source, destination: Destination, config: any, trimPartitions: boolean): Promise<void> => {
-	if (!(source instanceof RandomReadableSource)) {
-		throw new Error('Not implemented yet');  // TODO
+	// Do we need to configure the destination ?
+	const configureDestination = (
+		(config !== undefined) &&
+		!(source instanceof RandomReadableSource) &&
+		!trimPartitions
+	);
+	// Do we need to configure the source ?
+	const configureSource = (config !== undefined) && !configureDestination;
+	// Do we need to make the source randomly readable ?
+	const shouldMakeSourceRandomReadable = (
+		!(source instanceof RandomReadableSource) && 
+		(trimPartitions || configureSource)
+	);
+	if (shouldMakeSourceRandomReadable) {
+		await Bluebird.using(makeSourceRandomReadable(source), async (source: RandomReadableSource) => {
+			await pipeSourceToDestination(source, destination, config, trimPartitions);
+		});
+		return;
 	}
-	const configuredSource = await ConfiguredSource.fromSource(source, trimPartitions, legacyConfigure, config);
-	const stream = await configuredSource.createSparseReadStream();
-	const outputStream = await destination.createSparseWriteStream();
-
-	const progressBar = new ProgressBar('[:bar] :current / :total bytes ; :percent', { total: stream.blockMap.imageSize, width: 40 });
+	if (configureSource) {
+		source = await ConfiguredSource.fromSource(source, trimPartitions, legacyConfigure, config);
+	}
+	let sourceStream;
+	let destinationStream;
+	if (trimPartitions) {
+		sourceStream = await source.createSparseReadStream();
+		destinationStream = await destination.createSparseWriteStream();
+	} else {
+		sourceStream = await source.createReadStream();
+		destinationStream = await destination.createWriteStream();
+	}
+	const progressBar = new ProgressBar('[:bar] :current / :total bytes ; :percent', { total: sourceStream.blockMap.imageSize, width: 40 }); // TODO
 	const updateProgressBar = () => {
-		if (progressBar.curr !== stream.bytesRead) {
-			progressBar.tick(stream.bytesRead - progressBar.curr);
+		if (progressBar.curr !== sourceStream.bytesRead) {
+			progressBar.tick(sourceStream.bytesRead - progressBar.curr);
 		}
 	};
 	const progressBarUpdateInterval = setInterval(updateProgressBar, 1000 / 25);
 
-	stream.pipe(outputStream);
+	sourceStream.pipe(outputStream);
 
 	await new Promise((resolve: () => void, reject: (err: Error) => void) => {
 		outputStream.on('finish', resolve);
@@ -80,16 +88,32 @@ const pipeSourceToDestination = async (source: Source, destination: Destination,
 
 	updateProgressBar();
 	clearInterval(progressBarUpdateInterval);
-}
+
+	//if (!(source instanceof RandomReadableSource)) {
+	//	if (trimPartitions) {
+	//		// Make it randomly readable as we need to trim it
+	//		Bluebird.using(makeSourceRandomReadable(source), async (source: RandomReadableSource) => {
+	//			await pipeSourceToDestination(source, destination, config, trimPartitions);
+	//		});
+	//		return;
+	//	}
+	//	throw new Error('Not implemented yet');  // TODO
+	//}
+	//const configuredSource = await ConfiguredSource.fromSource(source, trimPartitions, legacyConfigure, config);
+	//const stream = await configuredSource.createSparseReadStream();
+	//const outputStream = await destination.createSparseWriteStream();
+
+};
 
 const main = async (input: string, output: string, configPath: string, trimPartitions: boolean): Promise<void> => {
-	const config = await getConfig(configPath);
-	await Bluebird.using(getSource(input), async (source: Source) => {
-		const metadata = await source.getMetadata();
-		await Bluebird.using(FileDestination.createDisposer(output, metadata.size), async (destination: FileDestination) => {
-			await pipeSourceToDestination(source, destination, config, trimPartitions);
-		});
-	});
+	await Bluebird.using(
+		getSource(input),
+		FileDestination.createDisposer(output),
+		getConfig(configPath),
+		async (source: Source, destination: Destination, config: any): Promise<void> => {
+			pipeSourceToDestination(source, destination, config, trimPartitions);
+		},
+	);
 };
 
 const optionDefinitions = [
@@ -108,6 +132,6 @@ const wrapper = async (): Promise<void> => {
 		console.error(error);
 		process.exitCode = 1;
 	}
-}
+};
 
 wrapper();

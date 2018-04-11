@@ -3,8 +3,12 @@ import { ReadResult } from 'file-disk';
 import { Url } from 'url';
 
 export interface SourceMetadata {
-	size: number;
+	size?: number;
 	compressedSize?: number;
+}
+
+export interface RandomReadableSourceMetadata extends SourceMetadata {
+	size: number;
 }
 
 export abstract class Source {
@@ -12,7 +16,7 @@ export abstract class Source {
 	static extensions?: string[];
 	abstract createReadStream(): Promise<NodeJS.ReadableStream>;
 	abstract getMetadata(): Promise<SourceMetadata>;
-	static fromURL(parsed: Url): Bluebird.Disposer<Source> {
+	static async fromURL(parsed: Url): Promise<Bluebird.Disposer<Source>> {
 		// Work around TypeScript not allowing abstract static methods.
 		// You need to implement this in subclasses to avoid a run time error.
 		throw new Error('Not implemented');
@@ -34,4 +38,5 @@ export abstract class Source {
 
 export abstract class RandomReadableSource extends Source {
 	abstract read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult>;
+	abstract getMetadata(): Promise<RandomReadableSourceMetadata>;
 }

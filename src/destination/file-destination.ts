@@ -1,7 +1,7 @@
 import * as Bluebird from 'bluebird';
 import { Chunk } from 'blockmap';
 import { ReadResult, WriteResult } from 'file-disk';
-import { createWriteStream, close, fsync, open, read, truncate, write } from 'fs';
+import { createWriteStream, close, fsync, open, read, write } from 'fs';
 import { Writable } from 'stream';
 import { Url } from 'url';
 import { promisify } from 'util';
@@ -12,7 +12,6 @@ const closeAsync = promisify(close);
 const fsyncAsync = promisify(fsync);
 const openAsync = promisify(open);
 const readAsync = promisify(read);
-const truncateAsync = promisify(truncate);
 const writeAsync = promisify(write);
 
 export class FileSparseWriteStream extends Writable implements SparseWriteStream {
@@ -30,7 +29,7 @@ export class FileSparseWriteStream extends Writable implements SparseWriteStream
 }
 
 export class FileDestination extends RandomAccessibleDestination {
-	constructor(private fd: number, public size: number) {
+	constructor(private fd: number) {
 		super();
 	}
 
@@ -54,13 +53,11 @@ export class FileDestination extends RandomAccessibleDestination {
 		await fsyncAsync(this.fd);
 	}
 
-	static createDisposer(path: string, size: number): Bluebird.Disposer<FileDestination> {
-		return openAsync(path, 'w+')
-		.then((fd: number) => {
-			return Bluebird.resolve(new FileDestination(fd, size))
-			.disposer(() => {
-				return closeAsync(fd);
-			});
+	static async createDisposer(path: string): Promise<Bluebird.Disposer<FileDestination>> {
+		const fd = await openAsync(path, 'w+');
+		return Bluebird.resolve(new FileDestination(fd))
+		.disposer(async () => {
+			await closeAsync(fd);
 		});
 	}
 }

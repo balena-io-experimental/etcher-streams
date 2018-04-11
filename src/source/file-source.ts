@@ -1,15 +1,17 @@
 import * as Bluebird from 'bluebird';
 import { ReadResult } from 'file-disk';
-import { close, createReadStream, fstat, open, read } from 'fs';
+import { close, createReadStream, createWriteStream, fstat, open, read, unlink } from 'fs';
 import { Url } from 'url';
 import { promisify } from 'util';
 
-import { RandomReadableSource, SourceMetadata } from './source';
+import { RandomReadableSource, RandomReadableSourceMetadata, Source } from './source';
+import * as tmp from '../tmp';
 
 const closeAsync = promisify(close);
 const openAsync = promisify(open);
 const readAsync = promisify(read);
 const fstatAsync = promisify(fstat);
+const unlinkAsync = promisify(unlink);
 
 export class FileSource extends RandomReadableSource {
 	static protocol: string = 'file:';
@@ -26,33 +28,38 @@ export class FileSource extends RandomReadableSource {
 		return createReadStream('', { fd: this.fd, autoClose: false });
 	}
 
-	async getMetadata(): Promise<SourceMetadata> {
+	async getMetadata(): Promise<RandomReadableSourceMetadata> {
 		return {
 			size: (await fstatAsync(this.fd)).size,
 		};
 	}
 
-	static fromURL(parsed: Url): Bluebird.Disposer<FileSource> {
+	static async fromURL(parsed: Url): Promise<Bluebird.Disposer<FileSource>> {
 		if (parsed.path === undefined) {
 			throw new Error('Missing path');
 		}
-		return openAsync(parsed.path, 'r')
-		.then((fd: number) => {
-			return Bluebird.resolve(new FileSource(fd))
-			.disposer(() => {
-				return closeAsync(fd);
-			});
+		const fd = await openAsync(parsed.path, 'r');
+		return Bluebird.resolve(new FileSource(fd))
+		.disposer(async () => {
+			await closeAsync(fd);
 		});
 	}
 }
 
-//export class TemporaryFileSource extends FileSource {
-//	async close(): Promise<void> {
-//		await super.close();
-//		await unlinkAsync(this.path);
-//	}
-//}
-//
-//export const makeSourceRandomReadable(source: Source): Bluebird.Disposer<RandomReadableSource> {
-//	tmp.file
-//}
+export const makeSourceRandomReadable = async (source: Source): Promise<Bluebird.Disposer<FileSource>> => {
+	const { fd, path } = await tmp.file();
+	const sourceStream = await source.createReadStream();
+	const fileStream = createWriteStream('', { fd, autoClose: false });
+	// TODO: emit progress events ?
+	// TODO: the tmp file won't be removed if the copy fails, this could use combineDisposers
+	await new Promise((resolve, reject) => {
+		sourceStream.on('error', reject);
+		fileStream.on('error', reject);
+		fileStream.on('finish', resolve);
+	});
+	return Bluebird.resolve(new FileSource(fd))
+	.disposer(async () => {
+		await closeAsync(fd);
+		await unlinkAsync(path);
+	});
+};
