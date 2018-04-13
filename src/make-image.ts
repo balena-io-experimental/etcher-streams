@@ -7,13 +7,13 @@ import * as ProgressBar from 'progress';
 import { parse as urlParse } from 'url';
 import { promisify } from 'util';
 
-import { Destination, ProgressEvent, SparseWriteStream } from './destination/destination';
+import { Destination, DestinationDisk, ProgressEvent, RandomAccessibleDestination, SparseWriteStream } from './destination/destination';
 import { FileDestination } from './destination/file-destination';
 import { ConfiguredSource } from './source/configured-source';
 import { configure as legacyConfigure } from './source/configured-source/configure';
-import { FileSource } from './source/file-source';
+import { FileSource, makeSourceRandomReadable } from './source/file-source';
 import { ResinS3Source } from './source/resin-s3-source';
-import { RandomReadableSource, Source } from './source/source';
+import { RandomReadableSource, Source, SourceMetadata } from './source/source';
 import { ZipSource } from './source/zip-source';
 
 const readFileAsync = promisify(readFile);
@@ -56,36 +56,85 @@ const calculateETA = (start: number, progress: ProgressEvent, size?: number, com
 	return left / speed;
 };
 
-const createProgressBar = (sourceStream: NodeJS.ReadableStream, destinationStream: NodeJS.WritableStream, size: number, compressedSize?: number): void => {
+const createProgressBar = (sourceStream: NodeJS.ReadableStream, destinationStream: NodeJS.WritableStream, sourceMetadata: SourceMetadata): void => {
 	const start = Date.now();
 	const progressBar = new ProgressBar(
 		'[:bar] :current / :total bytes ; :percent ; :timeLeft seconds left',
-		{ total: size, width: 40 },
+		{ total: sourceMetadata.size, width: 40 },
 	);
 	const updateProgressBar = (progress: ProgressEvent) => {
-		const timeLeft = Math.round(calculateETA(start, progress, size, compressedSize));
+		const timeLeft = Math.round(calculateETA(start, progress, sourceMetadata.size, sourceMetadata.compressedSize));
 		progressBar.tick(progress.position - progressBar.curr, { timeLeft });
 	};
 	sourceStream.on('progress', updateProgressBar);
 };
 
 const pipeSourceToDestination = async (source: Source, destination: Destination, config: any, trimPartitions: boolean): Promise<void> => {
-	if (!(source instanceof RandomReadableSource)) {
-		throw new Error('Not implemented yet');  // TODO
+	// This is a bit complex as tries to pipe any source to any destination.
+	// Concrete use cases will be simpler.
+	//
+	// pipe_streams                = sparse if should_trim else normal
+	// configure_destination       = have_config AND NOT source_random_readable AND NOT should_trim
+	// configure_source            = have_config AND not configure_destination
+	// make_source_random_readable = NOT source_random_readable AND (should_trim OR configure_source)
+	const mustConfigureDestination = (
+		(config !== undefined) &&
+		!(source instanceof RandomReadableSource) &&
+		!trimPartitions
+	);
+	if (mustConfigureDestination && !(destination instanceof RandomAccessibleDestination)) {
+		// The only implemented destination for now is randomly accessible, shouldn't happen.
+		throw new Error('Must configure destination, but it is not randomly accessible');
 	}
-	const configuredSource = await ConfiguredSource.fromSource(source, trimPartitions, legacyConfigure, config);
-	const stream = await configuredSource.createSparseReadStream();
-	const outputStream = await destination.createSparseWriteStream();
+	const mustConfigureSource = (
+		(config !== undefined) &&
+		!mustConfigureDestination
+	);
+	const mustMakeSourceRandomReadable = (
+		!(source instanceof RandomReadableSource) &&
+		(trimPartitions || mustConfigureSource)
+	);
+	if (mustMakeSourceRandomReadable) {
+		await Bluebird.using(makeSourceRandomReadable(source), async (source: RandomReadableSource): Promise<void> => {
+			await pipeSourceToDestination(source, destination, config, trimPartitions);
+		});
+		return;
+	}
+	if (mustConfigureSource) {
+		if (!(source instanceof RandomReadableSource)) {
+			// Make tsc happy, but this should never happen
+			throw new Error('Should not happen');
+		}
+		source = await ConfiguredSource.fromSource(source, trimPartitions, legacyConfigure, config);
+	}
+	let stream, outputStream;
+	if ((source instanceof ConfiguredSource) && trimPartitions) {
+		stream = await source.createSparseReadStream();
+		outputStream = await destination.createSparseWriteStream();
+	} else {
+		stream = await source.createReadStream();
+		outputStream = await destination.createWriteStream();
+	}
 	const metadata = await source.getMetadata();
+	createProgressBar(stream, outputStream, metadata);
+	await pipeAndWait(stream, outputStream);
+	if (mustConfigureDestination) {
+		if (!(destination instanceof RandomAccessibleDestination)) {
+			// Make tsc happy
+			// This can't happen, an error would have been thrown above.
+			throw new Error('Should not happen');
+		}
+		const destinationDisk = new DestinationDisk(destination);
+		await legacyConfigure(destinationDisk, config);
+	}
+};
 
-	createProgressBar(stream, outputStream, metadata.size, metadata.compressedSize);
-
-	stream.pipe(outputStream);
-
+const pipeAndWait = async (source: NodeJS.ReadableStream, destination: NodeJS.WritableStream): Promise<void> => {
 	await new Promise((resolve: () => void, reject: (err: Error) => void) => {
-		outputStream.on('finish', resolve);
-		outputStream.on('error', reject);
-		stream.on('error', reject);
+		destination.on('finish', resolve);
+		destination.on('error', reject);
+		source.on('error', reject);
+		source.pipe(destination);
 	});
 };
 

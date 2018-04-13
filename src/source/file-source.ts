@@ -15,9 +15,17 @@ const unlinkAsync = promisify(unlink);
 
 export class FileSource extends RandomReadableSource {
 	static protocol: string = 'file:';
+	private size: number;
 
 	constructor(private fd: number) {
 		super();
+	}
+
+	private async getSize(): Promise<number> {
+		if (this.size === undefined) {
+			this.size = (await fstatAsync(this.fd)).size;
+		}
+		return this.size;
 	}
 
 	async read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult> {
@@ -36,7 +44,7 @@ export class FileSource extends RandomReadableSource {
 
 	async getMetadata(): Promise<RandomReadableSourceMetadata> {
 		return {
-			size: (await fstatAsync(this.fd)).size,
+			size: await this.getSize(),
 		};
 	}
 
@@ -61,11 +69,14 @@ export const makeSourceRandomReadable = async (source: Source): Promise<Bluebird
 	await new Promise((resolve, reject) => {
 		sourceStream.on('error', reject);
 		fileStream.on('error', reject);
-		fileStream.on('finish', resolve);
+		sourceStream.on('end', resolve);
+		sourceStream.pipe(fileStream);
 	});
-	return Bluebird.resolve(new FileSource(fd))
+	await closeAsync(fd);  // TODO: why?
+	const fd2 = await openAsync(path, 'r');
+	return Bluebird.resolve(new FileSource(fd2))
 	.disposer(async () => {
-		await closeAsync(fd);
+		await closeAsync(fd2);
 		await unlinkAsync(path);
 	});
 };

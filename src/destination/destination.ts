@@ -15,18 +15,18 @@ export interface SparseWriteStream extends NodeJS.WritableStream {
 	on(event: string, listener: Function): this;
 }
 
-export interface Destination {
-	createWriteStream(): Promise<NodeJS.WritableStream>;
-	createSparseWriteStream(): Promise<SparseWriteStream>;
+export abstract class Destination {
+	abstract createWriteStream(): Promise<NodeJS.WritableStream>;
+	abstract createSparseWriteStream(): Promise<SparseWriteStream>;
 }
 
-export interface RandomAccessibleDestination extends Destination {
+export abstract class RandomAccessibleDestination extends Destination {
 	// Like a Destination but can be read and written to at any offset.
 	// Can be used to configure an image after writing.
-	size: number;
-	read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult>;
-	write(buffer: Buffer, bufferOffset: number, length: number, destinationOffset: number): Promise<WriteResult>;
-	flush(): Promise<void>;
+	abstract getSize(): Promise<number>;
+	abstract read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult>;
+	abstract write(buffer: Buffer, bufferOffset: number, length: number, destinationOffset: number): Promise<WriteResult>;
+	abstract flush(): Promise<void>;
 }
 
 export class DestinationDisk extends Disk {
@@ -40,7 +40,7 @@ export class DestinationDisk extends Disk {
 	}
 
 	async _getCapacity(): Promise<number> {
-		return this.destination.size;
+		return await this.destination.getSize();
 	}
 
 	async _read(buffer: Buffer, bufferOffset: number, length: number, fileOffset: number): Promise<ReadResult> {
