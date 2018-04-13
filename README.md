@@ -1,11 +1,8 @@
 Installing
 ==========
 
-Due to a bug in file-disk 1.0.1, you need to reinstall file-disk from the `record-discards` branch head.
-
 ```
 npm i
-npm i resin-io-modules/file-disk#record-discards
 ```
 
 Running
@@ -17,7 +14,7 @@ using the configuration from `rpi3.config.json` into the `resin.img` file.
 `node index.js -i resin-s3://resin-staging-img/raspberrypi3/2.9.6+rev1.prod -o resin.img -c rpi3.config.json -t`
 
 Accepted protocols for the source:
- * file://
+ * file://    (path must be absolute, zip files are allowed)
  * resin-s3://
 
 The output only accepts a file path for now.
