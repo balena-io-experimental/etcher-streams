@@ -6,6 +6,7 @@ declare module 'unzip-stream' {
 		type: string;
 		path: string;
 		size: number;
+		compressedSize: number;
 		autodrain(): void;
 	}
 

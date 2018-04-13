@@ -56,17 +56,25 @@ export class ConfiguredSource extends RandomReadableSource {
 		imageStream.on('error', (err) => {
 			transform.emit('error', err);
 		});
+		imageStream.on('progress', (progress) => {
+			transform.emit('progress', progress);
+		});
 		imageStream.pipe(transform);
 		return transform;
 	}
 
 	async createSparseReadStream(): Promise<FilterStream> {
+		// TODO: depending on the source reading only the required chunks may be faster
+		// for FileSource for example.
 		const stream = await this.createReadStream();
 		const blockmap = await this.disk.getBlockMap(BLOCK_SIZE, false);
 		console.log('blockmap', blockmap);
 		const transform = createFilterStream(blockmap, { verify: false });
 		stream.on('error', (error: Error) => {
 			transform.emit('error', error);
+		});
+		stream.on('progress', (progress) => {
+			transform.emit('progress', progress);
 		});
 		stream.pipe(transform);
 		return transform;

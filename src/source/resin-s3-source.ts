@@ -2,7 +2,7 @@ import * as Bluebird from 'bluebird';
 import * as AWS from 'aws-sdk';
 import { ReadResult } from 'file-disk';
 import * as _ from 'lodash';
-import * as unzip from 'unzip-stream';
+import { ZipStreamEntry } from 'unzip-stream';
 import { Url } from 'url';
 
 import { RandomReadableSource, RandomReadableSourceMetadata } from './source';
@@ -36,6 +36,7 @@ export class ResinS3Source extends RandomReadableSource {
 	static protocol: string = 'resin-s3:';
 
 	private static s3: AWS.S3 = getS3Client();
+	private entry: ZipStreamEntry;
 
 	constructor(readonly bucket: string, readonly deviceType: string, readonly version: string) {
 		super();
@@ -54,12 +55,16 @@ export class ResinS3Source extends RandomReadableSource {
 		}
 	}
 
-	private async getSize(compressed: boolean): Promise<number> {
-		const data = await ResinS3Source.s3.headObject(this.getS3Params(compressed)).promise();
-		if (data.ContentLength === undefined) {
-			throw new NoContentLength(this);
+	private async getEntry(): Promise<ZipStreamEntry> {
+		if (this.entry === undefined) {
+			const stream = ResinS3Source.s3.getObject(this.getS3Params(true)).createReadStream();
+			this.entry = await getFileStreamFromZipStream(stream, 'resin.img');
 		}
-		return data.ContentLength;
+		return this.entry;
+	}
+
+	private async getSize(compressed: boolean): Promise<number> {
+		return (await this.getEntry()).size;
 	}
 
 	async read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult> {
@@ -74,14 +79,14 @@ export class ResinS3Source extends RandomReadableSource {
 	}
 
 	async createReadStream(): Promise<NodeJS.ReadableStream> {
-		const stream = ResinS3Source.s3.getObject(this.getS3Params(true)).createReadStream();
-		return await getFileStreamFromZipStream(stream, 'resin.img');
+		return await this.getEntry();
 	}
 
 	async getMetadata(): Promise<RandomReadableSourceMetadata> {
+		const entry = await this.getEntry();
 		return {
-			size: await this.getSize(false),
-			compressedSize: await this.getSize(true),
+			size: entry.size,
+			compressedSize: entry.compressedSize,
 		};
 	}
 

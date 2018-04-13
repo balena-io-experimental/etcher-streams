@@ -25,7 +25,13 @@ export class FileSource extends RandomReadableSource {
 	}
 
 	async createReadStream(): Promise<NodeJS.ReadableStream> {
-		return createReadStream('', { fd: this.fd, autoClose: false });
+		const stream = createReadStream('', { fd: this.fd, autoClose: false });
+		let bytes = 0;
+		stream.on('data', (buffer) => {
+			bytes += buffer.length;
+			stream.emit('progress', { bytes, position: bytes });
+		});
+		return stream;
 	}
 
 	async getMetadata(): Promise<RandomReadableSourceMetadata> {

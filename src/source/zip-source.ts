@@ -31,6 +31,7 @@ export class ZipSource extends Source {
 		const entry = await this.getEntry();
 		return {
 			size: entry.size,
+			compressedSize: entry.compressedSize,
 		};
 	}
 
