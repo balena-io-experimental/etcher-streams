@@ -1,19 +1,12 @@
 import * as Bluebird from 'bluebird';
 import { Chunk } from 'blockmap';
 import { ReadResult, WriteResult } from 'file-disk';
-import { createWriteStream, close, fstat, fsync, open, read, write } from 'fs';
+import { createWriteStream } from 'fs';
 import { Writable } from 'stream';
 import { Url } from 'url';
-import { promisify } from 'util';
 
 import { Destination, RandomAccessibleDestination, SparseWriteStream } from './destination';
-
-const closeAsync = promisify(close);
-const fstatAsync = promisify(fstat);
-const fsyncAsync = promisify(fsync);
-const openAsync = promisify(open);
-const readAsync = promisify(read);
-const writeAsync = promisify(write);
+import { close, fstat, fsync, open, read, write } from '../fs';
 
 export class FileSparseWriteStream extends Writable implements SparseWriteStream {
 	private position: number;
@@ -39,7 +32,7 @@ export class FileSparseWriteStream extends Writable implements SparseWriteStream
 				this.emitProgress();
 			}
 			const start = Date.now();
-			await writeAsync(this.fd, chunk.buffer, 0, chunk.length, chunk.position);
+			await write(this.fd, chunk.buffer, 0, chunk.length, chunk.position);
 			const end = Date.now();
 			this.timeSpentWriting += end - start;
 			this.position += chunk.length;
@@ -63,7 +56,7 @@ export class FileDestination extends RandomAccessibleDestination {
 	// Is this readdly needed? Who calls Disk.getCapacity? If no one does, remove this.
 	// candidates are partitioninfo, and node-ext2fs
 	async getSize(): Promise<number> {
-		return (await fstatAsync(this.fd)).size;
+		return (await fstat(this.fd)).size;
 	}
 
 	async createWriteStream(): Promise<NodeJS.WritableStream> {
@@ -75,22 +68,22 @@ export class FileDestination extends RandomAccessibleDestination {
 	}
 
 	async read(buffer: Buffer, bufferOffset: number, length: number, fileOffset: number): Promise<ReadResult> {
-		return await readAsync(this.fd, buffer, bufferOffset, length, fileOffset);
+		return await read(this.fd, buffer, bufferOffset, length, fileOffset);
 	}
 
 	async write(buffer: Buffer, bufferOffset: number, length: number, fileOffset: number): Promise<WriteResult> {
-		return await writeAsync(this.fd, buffer, bufferOffset, length, fileOffset);
+		return await write(this.fd, buffer, bufferOffset, length, fileOffset);
 	}
 
 	async flush(): Promise<void> {
-		await fsyncAsync(this.fd);
+		await fsync(this.fd);
 	}
 
 	static async createDisposer(path: string): Promise<Bluebird.Disposer<FileDestination>> {
-		const fd = await openAsync(path, 'w+');
+		const fd = await open(path, 'w+');
 		return Bluebird.resolve(new FileDestination(fd))
 		.disposer(async () => {
-			await closeAsync(fd);
+			await close(fd);
 		});
 	}
 }

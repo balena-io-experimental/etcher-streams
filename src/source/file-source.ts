@@ -1,17 +1,11 @@
 import * as Bluebird from 'bluebird';
 import { ReadResult } from 'file-disk';
-import { close, createReadStream, createWriteStream, fstat, open, read, unlink } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
 import { Url } from 'url';
-import { promisify } from 'util';
 
 import { RandomReadableSource, RandomReadableSourceMetadata, Source } from './source';
+import { close, fstat, open, read, unlink } from '../fs';
 import * as tmp from '../tmp';
-
-const closeAsync = promisify(close);
-const openAsync = promisify(open);
-const readAsync = promisify(read);
-const fstatAsync = promisify(fstat);
-const unlinkAsync = promisify(unlink);
 
 export class FileSource extends RandomReadableSource {
 	static protocol: string = 'file:';
@@ -23,13 +17,13 @@ export class FileSource extends RandomReadableSource {
 
 	private async getSize(): Promise<number> {
 		if (this.size === undefined) {
-			this.size = (await fstatAsync(this.fd)).size;
+			this.size = (await fstat(this.fd)).size;
 		}
 		return this.size;
 	}
 
 	async read(buffer: Buffer, bufferOffset: number, length: number, sourceOffset: number): Promise<ReadResult> {
-		return await readAsync(this.fd, buffer, bufferOffset, length, sourceOffset);
+		return await read(this.fd, buffer, bufferOffset, length, sourceOffset);
 	}
 
 	async createReadStream(): Promise<NodeJS.ReadableStream> {
@@ -52,10 +46,10 @@ export class FileSource extends RandomReadableSource {
 		if (parsed.path === undefined) {
 			throw new Error('Missing path');
 		}
-		const fd = await openAsync(parsed.path, 'r');
+		const fd = await open(parsed.path, 'r');
 		return Bluebird.resolve(new FileSource(fd))
 		.disposer(async () => {
-			await closeAsync(fd);
+			await close(fd);
 		});
 	}
 }
@@ -72,11 +66,11 @@ export const makeSourceRandomReadable = async (source: Source): Promise<Bluebird
 		sourceStream.on('end', resolve);
 		sourceStream.pipe(fileStream);
 	});
-	await closeAsync(fd);  // TODO: why?
-	const fd2 = await openAsync(path, 'r');
+	await close(fd);  // TODO: why?
+	const fd2 = await open(path, 'r');
 	return Bluebird.resolve(new FileSource(fd2))
 	.disposer(async () => {
-		await closeAsync(fd2);
-		await unlinkAsync(path);
+		await close(fd2);
+		await unlink(path);
 	});
 };

@@ -1,9 +1,7 @@
 import * as Bluebird from 'bluebird';
 import * as commandLineArgs from 'command-line-args';
-import { readFile } from 'fs';
 import * as ProgressBar from 'progress';
 import { parse as urlParse } from 'url';
-import { promisify } from 'util';
 
 import { Destination, DestinationDisk, RandomAccessibleDestination } from './destination/destination';
 import { FileDestination } from './destination/file-destination';
@@ -14,8 +12,7 @@ import { FileSource, makeSourceRandomReadable } from './source/file-source';
 import { ResinS3Source } from './source/resin-s3-source';
 import { RandomReadableSource, Source, SourceMetadata } from './source/source';
 import { ZipSource } from './source/zip-source';
-
-const readFileAsync = promisify(readFile);
+import { readFile } from './fs';
 
 // Sources that only accept some specific extensions must come first.
 const SOURCE_TYPES = [ ZipSource, FileSource, ResinS3Source ];
@@ -32,7 +29,7 @@ const getSource = (url: string): Promise<Bluebird.Disposer<Source>> => {
 
 const getConfig = async (path: string) => {
 	if (path) {
-		const data = await readFileAsync(path);
+		const data = await readFile(path);
 		const config = JSON.parse(data.toString());
 		return { config };
 	}
