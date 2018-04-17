@@ -1,14 +1,13 @@
-import { FilterStream } from 'blockmap';
 import * as Bluebird from 'bluebird';
 import * as commandLineArgs from 'command-line-args';
 import { readFile } from 'fs';
-import * as Path from 'path';
 import * as ProgressBar from 'progress';
 import { parse as urlParse } from 'url';
 import { promisify } from 'util';
 
-import { Destination, DestinationDisk, ProgressEvent, RandomAccessibleDestination, SparseWriteStream } from './destination/destination';
+import { Destination, DestinationDisk, RandomAccessibleDestination } from './destination/destination';
 import { FileDestination } from './destination/file-destination';
+import { ProgressEvent } from './progress';
 import { ConfiguredSource } from './source/configured-source';
 import { configure as legacyConfigure } from './source/configured-source/configure';
 import { FileSource, makeSourceRandomReadable } from './source/file-source';

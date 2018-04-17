@@ -2,7 +2,7 @@
   "name": "etcher-streams",
   "version": "0.0.1",
   "description": "Download and configure resinOS images from resin.io",
-  "main": "index.js",
+  "main": "build/index.js",
   "scripts": {
     "lint": "resin-lint --typescript 1 src typings",
     "test": "echo \"Error: no test specified\" && exit 1"

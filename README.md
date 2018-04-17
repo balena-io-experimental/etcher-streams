@@ -11,7 +11,7 @@ Running
 Download an `raspberrypi3` image at version `2.9.6+rev1.prod` from the `resin-staging-img` resin s3 bucket
 using the configuration from `rpi3.config.json` into the `resin.img` file.
 
-`node index.js -i resin-s3://resin-staging-img/raspberrypi3/2.9.6+rev1.prod -o resin.img -c rpi3.config.json -t`
+`./node_modules/.bin/ts-node src/make-image.ts -i resin-s3://resin-staging-img/raspberrypi3/2.9.6+rev1.prod -o resin.img -c rpi3.config.json -t`
 
 Accepted protocols for the source:
  * file://    (path must be absolute, zip files are allowed)

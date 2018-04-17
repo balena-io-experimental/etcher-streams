@@ -2,12 +2,7 @@ import { Chunk } from 'blockmap';
 import { Disk, ReadResult, WriteResult } from 'file-disk';
 import { Url } from 'url';
 
-export interface ProgressEvent {
-	bytes: number;  // amount of bytes actually read or written from/to the source/destination
-	position: number;  // position in the stream (may be different from bytes if we skip some chunks)
-	time: number;  // time actually spent reading or writing in milliseconds
-	compressedBytes?: number;  // amount of bytes actually read from the compressed source
-}
+import { ProgressEvent } from '../progress';
 
 export interface SparseWriteStream extends NodeJS.WritableStream {
 	_write(chunk: Chunk, enc: string, callback: (err?: Error | void) => void): void;
